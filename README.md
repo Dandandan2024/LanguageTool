@@ -1,15 +1,22 @@
-# LangTool MVP with Scheduler
+# LangTool MVP with Frontend UI
 
-## Backend Endpoints
-- `POST /encounter` — log a phrase encounter
-- `POST /grade` — update review state (SM-2)
-- `GET /due` — list due phrases for review
-
-Sample test:
+## How to run
+1. Backend:
 ```bash
-curl -X POST http://localhost:5000/encounter   -H "Content-Type: application/json"   -d '{"user_id":1,"phrase_id":101,"signals":["tap"],"raw_text":"bonjour"}'
-
-curl -X POST http://localhost:5000/grade   -H "Content-Type: application/json"   -d '{"user_id":1,"phrase_id":101,"grade":4}'
-
-curl "http://localhost:5000/due?user_id=1&limit=5"
+cd backend
+npm install
+cp .env.example .env
+npm run dev
 ```
+2. Frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Visit http://localhost:5173 (Vite default) to use the UI.
+
+## UI Functions
+- Log Encounter: Calls POST /encounter
+- Send Grade: Calls POST /grade
+- Get Due Items: Calls GET /due
