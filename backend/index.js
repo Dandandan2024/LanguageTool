@@ -15,7 +15,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
 
-// In-memory store for MVP
+// In-memory stores
 let encounters = [];
 let reviewStates = {};
 let phrases = [
@@ -24,28 +24,14 @@ let phrases = [
   { phrase_id: 103, text: "Je voudrais un café", cefr_level: "A1" }
 ];
 
-app.get('/', (req, res) => {
-  res.json({ message: 'Backend API running' });
-});
+app.get('/', (req, res) => res.json({ message: 'Backend API running' }));
 
-app.get('/health', async (req, res) => {
-  try {
-    const dbRes = await pool.query('SELECT NOW()');
-    res.json({ status: 'ok', db_time: dbRes.rows[0] });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 'error', error: err.message });
-  }
-});
-
-// POST /encounter - logs a user phrase encounter
+// POST /encounter
 app.post('/encounter', (req, res) => {
   const { user_id, phrase_id, context_id, signals, latency_ms, hints_used, raw_text } = req.body;
-
   if (!user_id || !phrase_id) {
     return res.status(400).json({ error: "user_id and phrase_id are required" });
   }
-
   const encounter = {
     encounter_id: encounters.length + 1,
     user_id,
@@ -57,10 +43,8 @@ app.post('/encounter', (req, res) => {
     raw_text: raw_text || "",
     created_at: new Date().toISOString()
   };
-
   encounters.push(encounter);
 
-  // Initialize review state if new
   const key = `${user_id}:${phrase_id}`;
   if (!reviewStates[key]) {
     reviewStates[key] = {
@@ -73,11 +57,10 @@ app.post('/encounter', (req, res) => {
       last_grade: null
     };
   }
-
   res.json({ status: "logged", encounter });
 });
 
-// POST /grade - updates review state using SM-2
+// POST /grade
 app.post('/grade', (req, res) => {
   const { user_id, phrase_id, grade } = req.body;
   if (!user_id || !phrase_id || grade === undefined) {
@@ -99,25 +82,17 @@ app.post('/grade', (req, res) => {
   res.json({ status: "graded", state: reviewStates[key] });
 });
 
-// GET /due - returns due phrases for user
+// GET /due
 app.get('/due', (req, res) => {
   const { user_id, limit } = req.query;
-  if (!user_id) {
-    return res.status(400).json({ error: "user_id is required" });
-  }
+  if (!user_id) return res.status(400).json({ error: "user_id is required" });
   const now = new Date();
   const dueItems = Object.values(reviewStates)
     .filter(s => s.user_id == user_id && new Date(s.due_at) <= now)
-    .map(s => ({
-      ...s,
-      phrase: phrases.find(p => p.phrase_id === s.phrase_id)
-    }))
+    .map(s => ({ ...s, phrase: phrases.find(p => p.phrase_id === s.phrase_id) }))
     .sort((a, b) => new Date(a.due_at) - new Date(b.due_at));
-
   res.json(limit ? dueItems.slice(0, parseInt(limit)) : dueItems);
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Backend listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Backend listening on port ${PORT}`));
