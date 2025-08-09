@@ -33,12 +33,16 @@ def run_sql_file(filename):
             # Execute the SQL content
             cur.execute(sql_content)
             print(f"Successfully executed {filename}")
-            print("Russian content added to database!")
     except Exception as e:
         print(f"Error executing SQL: {e}")
     finally:
         conn.close()
 
 if __name__ == "__main__":
-    # Run placement cards setup
-    run_sql_file("create_placement_cards.sql")
+    import sys
+    if len(sys.argv) > 1:
+        filename = sys.argv[1]
+        run_sql_file(filename)
+    else:
+        print("Usage: python run_sql_file.py <sql_filename>")
+        print("Example: python run_sql_file.py create_placement_cards.sql")

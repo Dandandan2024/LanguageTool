@@ -8,6 +8,14 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from placement_cat import PlacementCAT
 
+# Import LLM content generation
+from llm.generation_api import (
+    GenerateContentRequest, GeneratedContentResponse,
+    BatchGenerateRequest, BatchGenerateResponse,
+    generate_single_content, generate_batch_content,
+    get_generation_suggestions
+)
+
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 app = FastAPI(title="Adaptive SRS API", version="0.1.0")
@@ -745,6 +753,108 @@ def submit_placement_answer(request: PlacementAnswerRequest):
     finally:
         if 'conn' in locals():
             conn.close()
+
+# ==================== LLM CONTENT GENERATION ENDPOINTS ====================
+
+@app.post("/v1/generate/content", response_model=GeneratedContentResponse)
+async def generate_content_endpoint(request: GenerateContentRequest):
+    """Generate a single piece of learning content using LLM"""
+    conn = db()
+    try:
+        result = await generate_single_content(request, conn)
+        return result
+    except Exception as e:
+        print(f"Content generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.post("/v1/generate/batch", response_model=BatchGenerateResponse)
+async def generate_batch_content_endpoint(request: BatchGenerateRequest):
+    """Generate multiple pieces of learning content in parallel"""
+    conn = db()
+    try:
+        result = await generate_batch_content(request, conn)
+        return result
+    except Exception as e:
+        print(f"Batch generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/v1/generate/suggestions/{user_cefr}")
+async def get_generation_suggestions_endpoint(user_cefr: str, user_id: str = "anonymous", limit: int = 10):
+    """Get suggested words for content generation based on user's learning progress"""
+    conn = db()
+    try:
+        suggestions = await get_generation_suggestions(user_cefr, user_id, conn, limit)
+        return {
+            "user_cefr": user_cefr,
+            "user_id": user_id,
+            "suggestions": suggestions,
+            "count": len(suggestions)
+        }
+    except Exception as e:
+        print(f"Generation suggestions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/v1/generate/stats/{user_id}")
+async def get_generation_stats(user_id: str):
+    """Get content generation statistics for a user"""
+    conn = db()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get generation counts by type
+            cur.execute("""
+                SELECT content_type, COUNT(*) as count, 
+                       AVG(generation_time_ms) as avg_time_ms,
+                       SUM(CASE WHEN success THEN 1 ELSE 0 END) as success_count
+                FROM content_generation_log 
+                WHERE user_id = %s 
+                GROUP BY content_type
+                ORDER BY count DESC
+            """, (user_id,))
+            
+            by_type = cur.fetchall()
+            
+            # Get recent generation history
+            cur.execute("""
+                SELECT target_word, content_type, success, created_at, generation_time_ms
+                FROM content_generation_log 
+                WHERE user_id = %s 
+                ORDER BY created_at DESC 
+                LIMIT 20
+            """, (user_id,))
+            
+            recent_history = cur.fetchall()
+            
+            # Get overall stats
+            cur.execute("""
+                SELECT COUNT(*) as total_generated,
+                       SUM(CASE WHEN success THEN 1 ELSE 0 END) as total_success,
+                       AVG(generation_time_ms) as avg_time_ms,
+                       MIN(created_at) as first_generation,
+                       MAX(created_at) as last_generation
+                FROM content_generation_log 
+                WHERE user_id = %s
+            """, (user_id,))
+            
+            overall_stats = cur.fetchone()
+            
+            return {
+                "user_id": user_id,
+                "overall_stats": dict(overall_stats) if overall_stats else {},
+                "by_content_type": [dict(row) for row in by_type],
+                "recent_history": [dict(row) for row in recent_history]
+            }
+            
+    except Exception as e:
+        print(f"Generation stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     import uvicorn
