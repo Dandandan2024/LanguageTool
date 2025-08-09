@@ -344,38 +344,40 @@ def submit_placement_answer(request: PlacementAnswerRequest):
             if isinstance(card_payload, str):
                 card_payload = json.loads(card_payload)
             
-            # Check if answer is correct based on card type
+            # Handle rating-based placement (1-4 scale)
+            # user_answer is now a rating string ("1", "2", "3", "4")
+            try:
+                user_rating = int(request.user_answer)
+            except (ValueError, TypeError):
+                user_rating = 2  # Default to "Hard" if invalid
+            
+            # Convert rating to correctness for adaptive algorithm
+            # 1 = Again (wrong), 2 = Hard (partially correct), 3 = Good (correct), 4 = Easy (very correct)
+            is_correct = user_rating >= 3
+            
+            # Get the actual correct answer for logging purposes
             card_type = card_row.get('type', 'unknown')
-            is_correct = False
-            correct_answer = ""
-            
             if card_type == 'cloze':
-                correct_answer = card_payload.get('answer', '').lower()
-                user_answer = request.user_answer.lower()
-                is_correct = user_answer == correct_answer
+                correct_answer = card_payload.get('answer', '')
             elif card_type == 'vocabulary':
-                # For vocabulary, check if translation is correct
-                correct_answer = card_payload.get('translation', '').lower()
-                user_answer = request.user_answer.lower()
-                is_correct = user_answer == correct_answer
+                correct_answer = card_payload.get('translation', '')
             elif card_type == 'sentence':
-                # For sentence, check if English translation is correct
-                correct_answer = card_payload.get('english', '').lower()
-                user_answer = request.user_answer.lower()
-                is_correct = user_answer == correct_answer
+                correct_answer = card_payload.get('english', '')
             else:
-                # Fallback for unknown types
-                correct_answer = card_payload.get('answer', card_payload.get('translation', card_payload.get('english', ''))).lower()
-                user_answer = request.user_answer.lower()
-                is_correct = user_answer == correct_answer
+                correct_answer = "Rating-based assessment"
             
-            # Update ability estimate
+            # Update ability estimate with rating-based confidence
+            # Convert rating to confidence: 1=0.2, 2=0.5, 3=0.8, 4=1.0
+            confidence_map = {1: 0.2, 2: 0.5, 3: 0.8, 4: 1.0}
+            confidence = confidence_map.get(user_rating, 0.5)
+            
             item_theta = card_payload.get('theta', 0.0)
             new_theta, new_se = cat_system.update_ability(
                 session['current_theta'], 
                 session['theta_se'], 
                 item_theta, 
-                is_correct
+                is_correct,
+                confidence
             )
             
             # Record response

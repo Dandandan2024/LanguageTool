@@ -19,7 +19,7 @@ export default function Home() {
   const [placementItem, setPlacementItem] = useState(null)
   const [placementLoading, setPlacementLoading] = useState(false)
   const [placementResults, setPlacementResults] = useState(null)
-  const [selectedAnswer, setSelectedAnswer] = useState('')
+  const [placementShowAnswer, setPlacementShowAnswer] = useState(false)
 
   // Use environment variable for API URL, fallback to local development
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
@@ -102,7 +102,7 @@ export default function Home() {
       
       setPlacementSession(data.session_id)
       setPlacementItem(data.item)
-      setSelectedAnswer('')
+      setPlacementShowAnswer(false)
       
     } catch (err) {
       console.error('Placement start error:', err)
@@ -112,8 +112,8 @@ export default function Home() {
     }
   }
 
-  const submitPlacementAnswer = async () => {
-    if (!placementSession || !placementItem || !selectedAnswer) return
+  const submitPlacementRating = async (rating) => {
+    if (!placementSession || !placementItem) return
     
     try {
       setPlacementLoading(true)
@@ -124,13 +124,13 @@ export default function Home() {
         body: JSON.stringify({
           session_id: placementSession,
           card_id: placementItem.id,
-          user_answer: selectedAnswer,
+          user_answer: rating.toString(), // Convert rating to string for API
           response_time_ms: 0
         })
       })
       
       if (!response.ok) {
-        throw new Error('Failed to submit answer')
+        throw new Error('Failed to submit rating')
       }
       
       const data = await response.json()
@@ -142,12 +142,12 @@ export default function Home() {
       } else {
         // Next question
         setPlacementItem(data.item)
-        setSelectedAnswer('')
+        setPlacementShowAnswer(false) // Reset answer state for next card
       }
       
     } catch (err) {
-      console.error('Placement answer error:', err)
-      setError('Failed to submit answer')
+      console.error('Placement rating error:', err)
+      setError('Failed to submit rating')
     } finally {
       setPlacementLoading(false)
     }
@@ -293,15 +293,16 @@ export default function Home() {
             <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
               {payload.text || 'No text available'}
             </p>
-            {payload.translation && (
-              <p style={{ fontSize: '1rem', color: '#6c757d', fontStyle: 'italic' }}>
-                {payload.translation}
-              </p>
-            )}
-            {payload.hints && payload.hints.length > 0 && (
-              <p style={{ fontSize: '0.9rem', color: '#28a745' }}>
-                💡 Hint: {payload.hints[0]}
-              </p>
+            {placementShowAnswer && (
+              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+                <p><strong>Answer:</strong> {payload.answer}</p>
+                {payload.hints && (
+                  <p><strong>Hint:</strong> {Array.isArray(payload.hints) ? payload.hints.join(', ') : payload.hints}</p>
+                )}
+                {payload.translation && (
+                  <p><strong>Translation:</strong> {payload.translation}</p>
+                )}
+              </div>
             )}
           </div>
         )
@@ -313,6 +314,12 @@ export default function Home() {
             <p style={{ fontSize: '2rem', margin: '1rem 0' }}>
               {payload.word || 'No word available'}
             </p>
+            {placementShowAnswer && (
+              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+                <p><strong>Translation:</strong> {payload.translation}</p>
+                <p><strong>Level:</strong> {payload.difficulty}</p>
+              </div>
+            )}
           </div>
         )
       
@@ -323,6 +330,12 @@ export default function Home() {
             <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
               {payload.russian || payload.spanish || 'No sentence available'}
             </p>
+            {placementShowAnswer && (
+              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+                <p><strong>English:</strong> {payload.english}</p>
+                <p><strong>Level:</strong> {payload.difficulty}</p>
+              </div>
+            )}
           </div>
         )
       
@@ -647,45 +660,99 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Use placement card rendering (no answer reveal) */}
+          {/* Use placement card rendering with answer reveal */}
           {renderPlacementCard(placementItem)}
           
-          {/* Add input field for user answer */}
-          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-            <input
-              type="text"
-              placeholder="Enter your answer..."
-              value={selectedAnswer}
-              onChange={(e) => setSelectedAnswer(e.target.value)}
-              style={{
-                padding: '1rem',
-                fontSize: '1.1rem',
-                border: '2px solid #dee2e6',
-                borderRadius: '8px',
-                width: '100%',
-                maxWidth: '400px',
-                marginTop: '1rem'
-              }}
-            />
-          </div>
-
-          <div style={{ textAlign: 'center' }}>
-            <button
-              onClick={submitPlacementAnswer}
-              disabled={!selectedAnswer || placementLoading}
-              style={{
-                padding: '1rem 2rem',
-                backgroundColor: selectedAnswer && !placementLoading ? '#28a745' : '#6c757d',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                fontSize: '1.1rem',
-                cursor: selectedAnswer && !placementLoading ? 'pointer' : 'not-allowed'
-              }}
-            >
-              {placementLoading ? 'Processing...' : 'Submit Answer'}
-            </button>
-          </div>
+          {/* Same UI flow as study system */}
+          {!placementShowAnswer ? (
+            <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+              <button 
+                onClick={() => setPlacementShowAnswer(true)}
+                style={{
+                  padding: '1rem 2rem',
+                  fontSize: '1.2rem',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer'
+                }}
+              >
+                Show Answer
+              </button>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+              <p style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#495057' }}>
+                How well did you know this?
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => submitPlacementRating(1)}
+                  disabled={placementLoading}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: placementLoading ? '#6c757d' : '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: placementLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  1 - Again
+                </button>
+                <button
+                  onClick={() => submitPlacementRating(2)}
+                  disabled={placementLoading}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: placementLoading ? '#6c757d' : '#fd7e14',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: placementLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  2 - Hard
+                </button>
+                <button
+                  onClick={() => submitPlacementRating(3)}
+                  disabled={placementLoading}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: placementLoading ? '#6c757d' : '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: placementLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  3 - Good
+                </button>
+                <button
+                  onClick={() => submitPlacementRating(4)}
+                  disabled={placementLoading}
+                  style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: placementLoading ? '#6c757d' : '#007bff',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: placementLoading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  4 - Easy
+                </button>
+              </div>
+              {placementLoading && (
+                <p style={{ marginTop: '1rem', color: '#6c757d' }}>Processing...</p>
+              )}
+            </div>
+          )}
         </div>
       )
     }
