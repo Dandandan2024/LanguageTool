@@ -10,9 +10,16 @@ export default function Home() {
   const [error, setError] = useState(null)
   const [username, setUsername] = useState('')
   const [isUsernameSet, setIsUsernameSet] = useState(false)
-  const [currentView, setCurrentView] = useState('study') // 'study' or 'stats'
+  const [currentView, setCurrentView] = useState('study') // 'study', 'stats', or 'placement'
   const [stats, setStats] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
+  
+  // Placement test state
+  const [placementSession, setPlacementSession] = useState(null)
+  const [placementItem, setPlacementItem] = useState(null)
+  const [placementLoading, setPlacementLoading] = useState(false)
+  const [placementResults, setPlacementResults] = useState(null)
+  const [selectedAnswer, setSelectedAnswer] = useState('')
 
   // Use environment variable for API URL, fallback to local development
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
@@ -60,6 +67,81 @@ export default function Home() {
       setError('Failed to load statistics')
     } finally {
       setStatsLoading(false)
+    }
+  }
+
+  // Placement test functions
+  const startPlacementTest = async (claimedLevel = null) => {
+    if (!username) return
+    try {
+      setPlacementLoading(true)
+      setError(null)
+      
+      const response = await fetch(`${API_BASE}/v1/placement/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username,
+          language: 'en',
+          claimed_level: claimedLevel
+        })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to start placement test')
+      }
+      
+      const data = await response.json()
+      setPlacementSession(data.session_id)
+      setPlacementItem(data.item)
+      setSelectedAnswer('')
+      
+    } catch (err) {
+      console.error('Placement start error:', err)
+      setError('Failed to start placement test')
+    } finally {
+      setPlacementLoading(false)
+    }
+  }
+
+  const submitPlacementAnswer = async () => {
+    if (!placementSession || !placementItem || !selectedAnswer) return
+    
+    try {
+      setPlacementLoading(true)
+      
+      const response = await fetch(`${API_BASE}/v1/placement/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: placementSession,
+          card_id: placementItem.id,
+          user_answer: selectedAnswer,
+          response_time_ms: 0
+        })
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to submit answer')
+      }
+      
+      const data = await response.json()
+      
+      if (data.complete) {
+        // Test completed
+        setPlacementResults(data.results)
+        setPlacementItem(null)
+      } else {
+        // Next question
+        setPlacementItem(data.item)
+        setSelectedAnswer('')
+      }
+      
+    } catch (err) {
+      console.error('Placement answer error:', err)
+      setError('Failed to submit answer')
+    } finally {
+      setPlacementLoading(false)
     }
   }
 
@@ -342,6 +424,207 @@ export default function Home() {
     )
   }
 
+  const renderPlacementView = () => {
+    // Welcome screen - no session started
+    if (!placementSession && !placementResults) {
+      return (
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h2>🎯 Adaptive Placement Test</h2>
+          <p style={{ fontSize: '1.1rem', lineHeight: '1.6', marginBottom: '2rem', color: '#495057' }}>
+            This intelligent test will determine your CEFR level (A1-C2) in just 7-12 questions.
+            <br />
+            The questions adapt to your ability - getting harder or easier based on your answers.
+          </p>
+          
+          <div style={{ backgroundColor: '#f8f9fa', padding: '1.5rem', borderRadius: '8px', marginBottom: '2rem', textAlign: 'left' }}>
+            <h3 style={{ margin: '0 0 1rem 0' }}>📋 How it works:</h3>
+            <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
+              <li>Start at intermediate level (B1)</li>
+              <li>Questions get harder if you're doing well</li>
+              <li>Questions get easier if you're struggling</li>
+              <li>Stops when we're confident about your level</li>
+              <li>Get your CEFR level + personalized word list</li>
+            </ul>
+          </div>
+
+          <div style={{ marginBottom: '2rem' }}>
+            <p style={{ marginBottom: '1rem' }}>Optional: What level do you think you are?</p>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {['A1', 'A2', 'B1', 'B2', 'C1', 'C2'].map(level => (
+                <button
+                  key={level}
+                  onClick={() => startPlacementTest(level)}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#e9ecef',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                  disabled={placementLoading}
+                >
+                  {level}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={() => startPlacementTest()}
+            disabled={placementLoading}
+            style={{
+              padding: '1rem 2rem',
+              backgroundColor: '#28a745',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '1.1rem',
+              cursor: placementLoading ? 'not-allowed' : 'pointer',
+              opacity: placementLoading ? 0.6 : 1
+            }}
+          >
+            {placementLoading ? 'Starting Test...' : '🚀 Start Placement Test'}
+          </button>
+        </div>
+      )
+    }
+
+    // Test completed - show results
+    if (placementResults) {
+      return (
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h2>🎉 Placement Test Complete!</h2>
+          
+          <div style={{ backgroundColor: '#d4edda', padding: '2rem', borderRadius: '8px', marginBottom: '2rem' }}>
+            <h3 style={{ margin: '0 0 1rem 0', color: '#155724' }}>Your CEFR Level:</h3>
+            <div style={{ fontSize: '3rem', fontWeight: 'bold', color: '#28a745', marginBottom: '1rem' }}>
+              {placementResults.cefr_level}
+            </div>
+            <p style={{ margin: 0, color: '#155724' }}>
+              {placementResults.items_completed} questions completed
+              <br />
+              Confidence: {Math.round((1 - (placementResults.confidence_interval[1] - placementResults.confidence_interval[0]) / 4) * 100)}%
+            </p>
+          </div>
+
+          {placementResults.known_words && (
+            <div style={{ backgroundColor: '#f8f9fa', padding: '1.5rem', borderRadius: '8px', marginBottom: '2rem', textAlign: 'left' }}>
+              <h3 style={{ margin: '0 0 1rem 0' }}>📚 Your Known Words (first 20):</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                {placementResults.known_words.slice(0, 20).map(word => (
+                  <span key={word} style={{ 
+                    padding: '0.25rem 0.5rem', 
+                    backgroundColor: '#007bff', 
+                    color: 'white', 
+                    borderRadius: '4px', 
+                    fontSize: '0.9rem' 
+                  }}>
+                    {word}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+            <button
+              onClick={() => {
+                setPlacementResults(null)
+                setPlacementSession(null)
+                setPlacementItem(null)
+              }}
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#28a745',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              Take Test Again
+            </button>
+            <button
+              onClick={() => setCurrentView('study')}
+              style={{
+                padding: '0.75rem 1.5rem',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer'
+              }}
+            >
+              Start Studying
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    // Test in progress - show current question
+    if (placementItem) {
+      return (
+        <div style={{ padding: '2rem' }}>
+          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+            <h2>🎯 Placement Test</h2>
+            <div style={{ backgroundColor: '#e3f2fd', padding: '1rem', borderRadius: '6px', display: 'inline-block' }}>
+              <strong>Current estimate: {placementItem.cefr || 'B1'}</strong>
+            </div>
+          </div>
+
+          <div style={{ backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '8px', marginBottom: '2rem' }}>
+            <h3 style={{ marginBottom: '1.5rem' }}>Complete the sentence:</h3>
+            <p style={{ fontSize: '1.2rem', lineHeight: '1.6', marginBottom: '2rem' }}>
+              {placementItem.text}
+            </p>
+
+            <div style={{ display: 'grid', gap: '1rem' }}>
+              {placementItem.options?.map((option, index) => (
+                <button
+                  key={index}
+                  onClick={() => setSelectedAnswer(option)}
+                  style={{
+                    padding: '1rem',
+                    backgroundColor: selectedAnswer === option ? '#007bff' : 'white',
+                    color: selectedAnswer === option ? 'white' : '#495057',
+                    border: selectedAnswer === option ? '2px solid #007bff' : '2px solid #dee2e6',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    fontSize: '1rem'
+                  }}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ textAlign: 'center' }}>
+            <button
+              onClick={submitPlacementAnswer}
+              disabled={!selectedAnswer || placementLoading}
+              style={{
+                padding: '1rem 2rem',
+                backgroundColor: selectedAnswer && !placementLoading ? '#28a745' : '#6c757d',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '1.1rem',
+                cursor: selectedAnswer && !placementLoading ? 'pointer' : 'not-allowed'
+              }}
+            >
+              {placementLoading ? 'Processing...' : 'Submit Answer'}
+            </button>
+          </div>
+        </div>
+      )
+    }
+
+    return <div style={{ textAlign: 'center', padding: '2rem' }}>Loading...</div>
+  }
+
   return (
     <main style={{padding: 24, maxWidth: 720, margin: '0 auto'}}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -378,6 +661,19 @@ export default function Home() {
           📚 Study
         </button>
         <button
+          onClick={() => setCurrentView('placement')}
+          style={{
+            padding: '0.75rem 1.5rem',
+            backgroundColor: currentView === 'placement' ? '#28a745' : '#e9ecef',
+            color: currentView === 'placement' ? 'white' : '#495057',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}
+        >
+          🎯 Placement Test
+        </button>
+        <button
           onClick={() => {
             setCurrentView('stats')
             fetchStats()
@@ -397,7 +693,8 @@ export default function Home() {
 
       <p>👤 Learning as: <strong>{username}</strong></p>
       
-      {currentView === 'stats' ? renderStatsView() : (
+      {currentView === 'stats' ? renderStatsView() : 
+       currentView === 'placement' ? renderPlacementView() : (
         <>
           <p>Card {currentCardIndex + 1} of {cards.length}</p>
           
