@@ -31,3 +31,4 @@ def load_russian_sql():
 
 if __name__ == "__main__":
     load_russian_sql()
+

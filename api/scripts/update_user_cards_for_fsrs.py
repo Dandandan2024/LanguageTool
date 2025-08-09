@@ -83,3 +83,4 @@ def update_user_cards_table():
 
 if __name__ == "__main__":
     update_user_cards_table()
+

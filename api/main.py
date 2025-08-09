@@ -60,6 +60,119 @@ from datetime import datetime, date, timedelta
 # Initialize FSRS scheduler
 fsrs_scheduler = FSRS()
 
+def generate_cards_from_lexemes_for_user(cur, username, user_cefr, count, theta_min, theta_max):
+    """Generate cards on-demand from lexemes for a specific user"""
+    import json
+    from random import choice
+    
+    # Map CEFR to theta for consistency
+    cefr_theta_map = {"A1": -2.0, "A2": -1.0, "B1": 0.0, "B2": 1.0, "C1": 2.0, "C2": 3.0}
+    target_theta = cefr_theta_map.get(user_cefr, 0.0)
+    
+    generated_cards = []
+    
+    try:
+        # Find lexemes the user hasn't learned yet, prioritizing by frequency
+        cur.execute("""
+            SELECT l.id, l.lemma, l.pos, l.cefr_level, l.frequency_rank
+            FROM lexemes l
+            LEFT JOIN cards c ON l.id = c.lexeme_id
+            LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
+            WHERE l.language = 'ru'
+            AND l.cefr_level = %s
+            AND (uc.card_id IS NULL OR uc.reps < 2)  -- New or barely learned
+            ORDER BY COALESCE(l.frequency_rank, 999999) ASC
+            LIMIT %s
+        """, (username, user_cefr, count * 2))  # Get more than needed to have options
+        
+        available_lexemes = cur.fetchall()
+        
+        if not available_lexemes:
+            # Fallback: get any lexemes in the theta range
+            cur.execute("""
+                SELECT l.id, l.lemma, l.pos, l.cefr_level, l.frequency_rank
+                FROM lexemes l
+                WHERE l.language = 'ru'
+                ORDER BY COALESCE(l.frequency_rank, 999999) ASC
+                LIMIT %s
+            """, (count * 2,))
+            available_lexemes = cur.fetchall()
+        
+        # Generate cards for selected lexemes
+        for i, lexeme in enumerate(available_lexemes[:count]):
+            if i >= count:
+                break
+                
+            lexeme_id = lexeme['id']
+            lemma = lexeme['lemma']
+            pos = lexeme['pos'] or 'word'
+            cefr = lexeme['cefr_level'] or user_cefr
+            
+            # Choose card type (vocabulary is simpler to generate)
+            card_type = choice(['vocabulary', 'cloze'])
+            
+            # Create simple card payload
+            if card_type == 'vocabulary':
+                payload = {
+                    "word": lemma,
+                    "translation": f"[{pos}] What does '{lemma}' mean?",
+                    "pos": pos,
+                    "target_word": lemma,
+                    "theta": target_theta,
+                    "cefr_level": cefr,
+                    "generation_method": "on_demand_simple",
+                    "difficulty": cefr
+                }
+            else:  # cloze
+                if pos == 'v':  # verb
+                    text = f"Я хочу ___ это."
+                    translation = "I want to ___ this."
+                elif pos == 'noun':
+                    text = f"Это мой ___."
+                    translation = "This is my ___."
+                else:
+                    text = f"___ очень важно."
+                    translation = "___ is very important."
+                
+                payload = {
+                    "text": text,
+                    "answer": lemma,
+                    "translation": translation,
+                    "target_word": lemma,
+                    "theta": target_theta,
+                    "cefr_level": cefr,
+                    "generation_method": "on_demand_simple",
+                    "hints": [f"{pos}"]
+                }
+            
+            # Insert the generated card
+            cur.execute("""
+                INSERT INTO cards (type, language, payload, lexeme_id)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, type, payload
+            """, (card_type, 'ru', json.dumps(payload, ensure_ascii=False), lexeme_id))
+            
+            new_card = cur.fetchone()
+            
+            # Format for session response
+            generated_cards.append({
+                'card_id': new_card['id'],
+                'type': new_card['type'],
+                'payload': new_card['payload'],
+                'due_date': None,
+                'interval_days': None,
+                'stability': None,
+                'difficulty': None,
+                'reps': None,
+                'lapses': None,
+                'state': None
+            })
+            
+    except Exception as e:
+        print(f"Error generating cards from lexemes: {e}")
+    
+    return generated_cards
+
 class NextRequest(BaseModel):
     count: int = 20
     username: str = "anonymous"
@@ -126,9 +239,10 @@ def sessions_next(req: NextRequest):
                 learning_cards = cur.fetchall()
                 remaining_count -= len(learning_cards)
             
-            # Priority 3: New cards (cards never seen before)
+            # Priority 3: Generate new cards from lexemes on-demand
             new_cards = []
             if remaining_count > 0:
+                # First try to find existing cards not yet seen by user
                 cur.execute("""
                     SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
                            NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
@@ -142,7 +256,16 @@ def sessions_next(req: NextRequest):
                     LIMIT %s
                 """, (req.username, theta_min, theta_max, remaining_count))
                 
-                new_cards = cur.fetchall()
+                existing_new_cards = cur.fetchall()
+                new_cards.extend(existing_new_cards)
+                remaining_count -= len(existing_new_cards)
+                
+                # If we still need more cards, generate them from lexemes
+                if remaining_count > 0:
+                    generated_cards = generate_cards_from_lexemes_for_user(
+                        cur, req.username, user_cefr, remaining_count, theta_min, theta_max
+                    )
+                    new_cards.extend(generated_cards)
             
             # Combine all cards
             all_cards = list(due_cards) + list(learning_cards) + list(new_cards)

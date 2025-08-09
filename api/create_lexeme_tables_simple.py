@@ -110,3 +110,4 @@ def create_lexeme_tables():
 
 if __name__ == "__main__":
     create_lexeme_tables()
+

@@ -30,3 +30,4 @@ for table in tables:
         print(f"  - {table}: Error - {e}")
 
 conn.close()
+

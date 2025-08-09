@@ -344,3 +344,4 @@ def schedule_card(card: Card, rating: Rating, now: datetime) -> Tuple[Card, Revi
     fsrs = create_fsrs()
     scheduled_cards = fsrs.repeat(card, now)
     return scheduled_cards[rating]
+

@@ -95,3 +95,4 @@ allowed_origins = [
 
 ## 🎉 Success!
 Your Adaptive SRS Language Learning App is now live and accessible worldwide!
+

@@ -176,3 +176,4 @@ def handle_sentence_review(request_data, db_connection):
         "supporting_word_updates": results["supporting_updates"],
         "details": results["credit_details"]
     }
+

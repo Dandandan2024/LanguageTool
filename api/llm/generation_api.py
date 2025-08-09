@@ -199,3 +199,4 @@ async def get_generation_suggestions(user_cefr: str, user_id: str, db_connection
             "C2": ["концептуализировать"]
         }
         return fallback.get(user_cefr, fallback["B1"])[:limit]
+

@@ -62,3 +62,4 @@ CREATE TABLE IF NOT EXISTS placement_responses (
     se_after REAL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+

@@ -79,3 +79,4 @@ VALUES
     ('anonymous', ARRAY['sentence', 'vocabulary'], 0.0),
     ('Jacob', ARRAY['sentence', 'cloze'], 0.2)
 ON CONFLICT (user_id) DO NOTHING;
+

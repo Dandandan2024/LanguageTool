@@ -51,3 +51,4 @@ def update_users_table():
 
 if __name__ == "__main__":
     update_users_table()
+
