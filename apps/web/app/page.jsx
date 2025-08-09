@@ -21,6 +21,22 @@ export default function Home() {
     }
   }, [username, isUsernameSet])
 
+  const handleUsernameSubmit = (e) => {
+    e.preventDefault()
+    if (username.trim()) {
+      setIsUsernameSet(true)
+      fetchCards()
+    }
+  }
+
+  const handleUsernameChange = () => {
+    setIsUsernameSet(false)
+    setCards([])
+    setCurrentCardIndex(0)
+    setShowAnswer(false)
+    setUsername('')
+  }
+
   const fetchCards = async () => {
     if (!username) return // Don't fetch cards without a username
     
@@ -216,24 +232,6 @@ export default function Home() {
       </main>
     )
   }
-
-  const handleUsernameSubmit = (e) => {
-    e.preventDefault()
-    if (username.trim()) {
-      setIsUsernameSet(true)
-      fetchCards()
-    }
-  }
-
-  const handleUsernameChange = () => {
-    setIsUsernameSet(false)
-    setCards([])
-    setCurrentCardIndex(0)
-    setShowAnswer(false)
-    setUsername('')
-  }
-
-
 
   const currentCard = cards[currentCardIndex]
 
