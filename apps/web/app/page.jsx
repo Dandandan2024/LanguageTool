@@ -14,6 +14,10 @@ export default function Home() {
   const [stats, setStats] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
   
+  // User profile state
+  const [userProfile, setUserProfile] = useState(null)
+  const [profileLoading, setProfileLoading] = useState(false)
+  
   // Placement test state
   const [placementSession, setPlacementSession] = useState(null)
   const [placementItem, setPlacementItem] = useState(null)
@@ -24,12 +28,36 @@ export default function Home() {
   // Use environment variable for API URL, fallback to local development
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
 
-  // Fetch cards from API when username is set
+  // Fetch user profile and cards when username is set
   useEffect(() => {
     if (username && isUsernameSet) {
+      fetchUserProfile()
       fetchCards()
     }
   }, [username, isUsernameSet])
+
+  const fetchUserProfile = async () => {
+    if (!username) return
+    try {
+      setProfileLoading(true)
+      const response = await fetch(`${API_BASE}/v1/user/${username}`)
+      if (!response.ok) {
+        throw new Error('Failed to fetch user profile')
+      }
+      const data = await response.json()
+      setUserProfile(data)
+    } catch (err) {
+      console.error('Profile error:', err)
+      // Set default profile on error
+      setUserProfile({
+        username: username,
+        cefr_level: 'B1',
+        has_placement: false
+      })
+    } finally {
+      setProfileLoading(false)
+    }
+  }
 
   const handleUsernameSubmit = (e) => {
     e.preventDefault()
@@ -136,9 +164,10 @@ export default function Home() {
       const data = await response.json()
       
       if (data.complete) {
-        // Test completed
+        // Test completed - refresh user profile to get new CEFR level
         setPlacementResults(data.results)
         setPlacementItem(null)
+        fetchUserProfile() // Update user profile with new CEFR level
       } else {
         // Next question
         setPlacementItem(data.item)
@@ -826,7 +855,28 @@ export default function Home() {
         </button>
       </div>
 
-      <p>👤 Learning as: <strong>{username}</strong></p>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+        <p style={{ margin: 0 }}>👤 Learning as: <strong>{username}</strong></p>
+        {userProfile && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ 
+              padding: '0.25rem 0.75rem', 
+              backgroundColor: userProfile.has_placement ? '#28a745' : '#6c757d',
+              color: 'white', 
+              borderRadius: '12px', 
+              fontSize: '0.85rem',
+              fontWeight: 'bold'
+            }}>
+              CEFR: {userProfile.cefr_level}
+            </span>
+            {!userProfile.has_placement && (
+              <span style={{ fontSize: '0.8rem', color: '#6c757d' }}>
+                (Take placement test for accurate level)
+              </span>
+            )}
+          </div>
+        )}
+      </div>
       
       {currentView === 'stats' ? renderStatsView() : 
        currentView === 'placement' ? renderPlacementView() : (

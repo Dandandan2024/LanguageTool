@@ -69,19 +69,51 @@ class NextRequest(BaseModel):
 
 @app.post("/v1/sessions/next")
 def sessions_next(req: NextRequest):
-    # Fetch due cards + some new ones
+    # Fetch cards appropriate for user's CEFR level
     conn = db()
     try:
         with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get cards - simplified query to avoid database errors
+            # Get user's CEFR level
+            cur.execute("""
+                SELECT cefr_level, theta_estimate FROM simple_users WHERE username = %s
+            """, (req.username,))
+            
+            user_profile = cur.fetchone()
+            user_cefr = user_profile['cefr_level'] if user_profile else 'B1'
+            user_theta = user_profile['theta_estimate'] if user_profile else 0.0
+            
+            # CEFR level to theta mapping
+            cefr_theta_map = {"A1": -2.0, "A2": -1.0, "B1": 0.0, "B2": 1.0, "C1": 2.0, "C2": 3.0}
+            target_theta = cefr_theta_map.get(user_cefr, 0.0)
+            
+            # Filter cards within user's CEFR level range (±1 level for variety)
+            theta_min = target_theta - 1.0
+            theta_max = target_theta + 1.0
+            
             cur.execute("""
                 SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days
                 FROM cards c
+                WHERE c.language = 'ru' 
+                AND c.payload ? 'theta'
+                AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
                 ORDER BY RANDOM()
                 LIMIT %s
-            """, (req.count,))
+            """, (theta_min, theta_max, req.count))
+            
             rows = cur.fetchall()
-            return {"items": rows}
+            
+            # If no cards found at user's level, fall back to all cards
+            if not rows:
+                cur.execute("""
+                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days
+                    FROM cards c
+                    WHERE c.language = 'ru'
+                    ORDER BY RANDOM()
+                    LIMIT %s
+                """, (req.count,))
+                rows = cur.fetchall()
+            
+            return {"items": rows, "user_cefr": user_cefr, "filtered_range": f"{theta_min:.1f} to {theta_max:.1f}"}
     finally:
         conn.close()
 
@@ -163,6 +195,10 @@ def placement_start_options():
 def placement_answer_options():
     return {"message": "OK"}
 
+@app.options("/v1/user/{username}")
+def user_profile_options(username: str):
+    return {"message": "OK"}
+
 @app.get("/v1/stats/{username}")
 def get_user_stats(username: str):
     """Get comprehensive statistics for a user"""
@@ -235,6 +271,59 @@ def get_user_stats(username: str):
             "ratings_breakdown": [],
             "daily_activity": [],
             "language_breakdown": []
+        }
+    finally:
+        conn.close()
+
+@app.get("/v1/user/{username}")
+def get_user_profile(username: str):
+    """Get user profile including CEFR level"""
+    conn = db()
+    try:
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get user profile
+            cur.execute("""
+                SELECT username, cefr_level, theta_estimate, last_placement_date, created_at
+                FROM simple_users 
+                WHERE username = %s
+            """, (username,))
+            
+            user = cur.fetchone()
+            
+            if user:
+                return {
+                    "username": user['username'],
+                    "cefr_level": user['cefr_level'],
+                    "theta_estimate": user['theta_estimate'],
+                    "last_placement_date": user['last_placement_date'].isoformat() if user['last_placement_date'] else None,
+                    "has_placement": user['last_placement_date'] is not None
+                }
+            else:
+                # Create new user with default level
+                cur.execute("""
+                    INSERT INTO simple_users (username, cefr_level, theta_estimate)
+                    VALUES (%s, 'B1', 0.0)
+                    RETURNING username, cefr_level, theta_estimate, last_placement_date, created_at
+                """, (username,))
+                
+                new_user = cur.fetchone()
+                return {
+                    "username": new_user['username'],
+                    "cefr_level": new_user['cefr_level'],
+                    "theta_estimate": new_user['theta_estimate'],
+                    "last_placement_date": None,
+                    "has_placement": False
+                }
+                
+    except Exception as e:
+        print(f"User profile error: {e}")
+        # Return default profile on error
+        return {
+            "username": username,
+            "cefr_level": "B1",
+            "theta_estimate": 0.0,
+            "last_placement_date": None,
+            "has_placement": False
         }
     finally:
         conn.close()
@@ -412,6 +501,17 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                         updated_at = now()
                     WHERE id = %s
                 """, (new_theta, new_se, items_completed, final_cefr, new_theta, request.session_id))
+                
+                # Store user's CEFR level for study system
+                cur.execute("""
+                    INSERT INTO simple_users (username, cefr_level, theta_estimate, last_placement_date)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (username) 
+                    DO UPDATE SET 
+                        cefr_level = EXCLUDED.cefr_level,
+                        theta_estimate = EXCLUDED.theta_estimate,
+                        last_placement_date = EXCLUDED.last_placement_date
+                """, (session['user_id'], final_cefr, new_theta))
                 
                 return {
                     "complete": True,
