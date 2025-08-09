@@ -6,7 +6,7 @@ export default function Home() {
   const [cards, setCards] = useState([])
   const [currentCardIndex, setCurrentCardIndex] = useState(0)
   const [showAnswer, setShowAnswer] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [username, setUsername] = useState('')
   const [isUsernameSet, setIsUsernameSet] = useState(false)
@@ -14,10 +14,12 @@ export default function Home() {
   // Use environment variable for API URL, fallback to local development
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
 
-  // Fetch cards from API
+  // Fetch cards from API when username is set
   useEffect(() => {
-    fetchCards()
-  }, [])
+    if (username && isUsernameSet) {
+      fetchCards()
+    }
+  }, [username, isUsernameSet])
 
   const fetchCards = async () => {
     if (!username) return // Don't fetch cards without a username
@@ -138,6 +140,50 @@ export default function Home() {
     }
   }
 
+  // Show username input FIRST if not set
+  if (!isUsernameSet) {
+    return (
+      <main style={{padding: 24, maxWidth: 720, margin: '0 auto', textAlign: 'center'}}>
+        <h1>Adaptive SRS — Language Learning v5.0 FINAL</h1>
+        <div style={{ marginTop: '2rem' }}>
+          <h2>Welcome! 👋</h2>
+          <p>Enter your name to start learning and track your progress:</p>
+          <form onSubmit={handleUsernameSubmit} style={{ marginTop: '1.5rem' }}>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter your username"
+              style={{
+                padding: '0.75rem',
+                fontSize: '1rem',
+                border: '2px solid #ddd',
+                borderRadius: '0.5rem',
+                marginRight: '0.5rem',
+                minWidth: '200px'
+              }}
+              required
+            />
+            <button 
+              type="submit"
+              style={{
+                padding: '0.75rem 1.5rem',
+                fontSize: '1rem',
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '0.5rem',
+                cursor: 'pointer'
+              }}
+            >
+              Start Learning
+            </button>
+          </form>
+        </div>
+      </main>
+    )
+  }
+
   if (loading) {
     return (
       <main style={{padding: 24, maxWidth: 720, margin: '0 auto', textAlign: 'center'}}>
@@ -187,55 +233,7 @@ export default function Home() {
     setUsername('')
   }
 
-  // Show username input if not set
-  if (!isUsernameSet) {
-    return (
-      <main style={{padding: 24, maxWidth: 720, margin: '0 auto', textAlign: 'center'}}>
-        <h1>Adaptive SRS — Language Learning v2.0 TEST</h1>
-        <div style={{ marginTop: '2rem' }}>
-          <h2>Welcome! 👋</h2>
-          <p>Enter your name to start learning and track your progress:</p>
-          <form onSubmit={handleUsernameSubmit} style={{ marginTop: '1.5rem' }}>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your name (e.g., Alice, Bob, Dan...)"
-              style={{
-                padding: '0.75rem',
-                fontSize: '1.1rem',
-                borderRadius: '8px',
-                border: '2px solid #ddd',
-                width: '300px',
-                maxWidth: '100%'
-              }}
-              autoFocus
-            />
-            <br />
-            <button
-              type="submit"
-              style={{
-                padding: '0.75rem 2rem',
-                fontSize: '1.1rem',
-                backgroundColor: '#007bff',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                marginTop: '1rem'
-              }}
-            >
-              Start Learning 🚀
-            </button>
-          </form>
-          <p style={{ marginTop: '1.5rem', fontSize: '0.9rem', color: '#666' }}>
-            💡 Your progress will be saved under this name.<br />
-            Friends can use their own names to track separate progress.
-          </p>
-        </div>
-      </main>
-    )
-  }
+
 
   const currentCard = cards[currentCardIndex]
 
