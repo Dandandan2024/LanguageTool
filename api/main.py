@@ -83,7 +83,7 @@ def sessions_next(req: NextRequest):
                 SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
                        uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
                 FROM cards c
-                INNER JOIN user_cards uc ON c.id = uc.card_id
+                INNER JOIN user_cards uc ON c.id::text = uc.card_id
                 WHERE uc.user_id = %s
                 AND c.language = 'ru'
                 AND c.payload ? 'theta'
@@ -104,7 +104,7 @@ def sessions_next(req: NextRequest):
                     SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
                            uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
                     FROM cards c
-                    INNER JOIN user_cards uc ON c.id = uc.card_id
+                    INNER JOIN user_cards uc ON c.id::text = uc.card_id
                     WHERE uc.user_id = %s
                     AND c.language = 'ru'
                     AND c.payload ? 'theta'
@@ -124,7 +124,7 @@ def sessions_next(req: NextRequest):
                     SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
                            NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
                     FROM cards c
-                    LEFT JOIN user_cards uc ON c.id = uc.card_id AND uc.user_id = %s
+                    LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
                     WHERE c.language = 'ru'
                     AND c.payload ? 'theta'
                     AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
@@ -145,9 +145,9 @@ def sessions_next(req: NextRequest):
                     SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
                            NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
                     FROM cards c
-                    LEFT JOIN user_cards uc ON c.id = uc.card_id AND uc.user_id = %s
+                    LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
                     WHERE c.language = 'ru'
-                    AND c.id NOT IN (SELECT unnest(%s::text[]))
+                    AND c.id::text NOT IN (SELECT unnest(%s::text[]))
                     ORDER BY RANDOM()
                     LIMIT %s
                 """, (req.username, [str(card['card_id']) for card in all_cards], remaining_count))
@@ -201,7 +201,7 @@ def submit_reviews(items: list[ReviewItem]):
                     cur.execute("""
                         SELECT * FROM user_cards 
                         WHERE user_id = %s AND card_id = %s
-                    """, (item.username, item.card_id))
+                    """, (item.username, str(item.card_id)))
                     
                     user_card = cur.fetchone()
                     
@@ -248,7 +248,7 @@ def submit_reviews(items: list[ReviewItem]):
                             scheduled_days = EXCLUDED.scheduled_days,
                             elapsed_days = EXCLUDED.elapsed_days
                     """, (
-                        item.username, item.card_id, updated_card.stability, updated_card.difficulty,
+                        item.username, str(item.card_id), updated_card.stability, updated_card.difficulty,
                         updated_card.scheduled_days, updated_card.due.date(), updated_card.reps,
                         updated_card.lapses, updated_card.last_review, updated_card.state.name.lower(),
                         updated_card.scheduled_days, updated_card.elapsed_days
@@ -258,7 +258,7 @@ def submit_reviews(items: list[ReviewItem]):
                     cur.execute("""
                         INSERT INTO review_log (user_id, card_id, rating, response_time_ms, ts) 
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (item.username, item.card_id, item.rating, item.response_time_ms or 0, now))
+                    """, (item.username, str(item.card_id), item.rating, item.response_time_ms or 0, now))
                     
                     updated_count += 1
                     
