@@ -169,11 +169,11 @@ def get_user_stats(username: str):
             
             # Daily activity (last 30 days)
             cur.execute("""
-                SELECT DATE(created_at) as date, COUNT(*) as count
+                SELECT DATE(ts) as date, COUNT(*) as count
                 FROM review_log 
                 WHERE user_id = %s 
-                AND created_at >= CURRENT_DATE - INTERVAL '30 days'
-                GROUP BY DATE(created_at)
+                AND ts >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY DATE(ts)
                 ORDER BY date DESC
             """, (username,))
             daily_activity = cur.fetchall()
