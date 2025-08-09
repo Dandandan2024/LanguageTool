@@ -44,24 +44,12 @@ def db():
     )
     return conn
 
-# --- FSRS stub (replace with real formulas) ---
-def fsrs_update(stability: float, difficulty: float, rating: int):
-    # Very rough placeholder just to wire the flow
-    if rating == 1:  # Again
-        stability = max(1.0, stability * 0.5)
-        difficulty = min(0.9, difficulty + 0.05)
-    elif rating == 2:  # Hard
-        stability = max(1.5, stability * 0.9)
-        difficulty = min(0.85, difficulty + 0.02)
-    elif rating == 3:  # Good
-        stability = max(2.0, stability * 1.2)
-        difficulty = max(0.15, difficulty - 0.01)
-    else:  # Easy
-        stability = max(3.0, stability * 1.4)
-        difficulty = max(0.1, difficulty - 0.02)
-    # Next interval heuristic
-    next_days = max(1, int(stability))
-    return stability, difficulty, next_days
+# Import FSRS v4 implementation
+from fsrs import FSRS, Card, Rating, State, schedule_card
+from datetime import datetime, date, timedelta
+
+# Initialize FSRS scheduler
+fsrs_scheduler = FSRS()
 
 class NextRequest(BaseModel):
     count: int = 20
@@ -69,7 +57,7 @@ class NextRequest(BaseModel):
 
 @app.post("/v1/sessions/next")
 def sessions_next(req: NextRequest):
-    # Fetch cards appropriate for user's CEFR level
+    """Fetch cards for review session using FSRS scheduling"""
     conn = db()
     try:
         with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -82,38 +70,102 @@ def sessions_next(req: NextRequest):
             user_cefr = user_profile['cefr_level'] if user_profile else 'B1'
             user_theta = user_profile['theta_estimate'] if user_profile else 0.0
             
-            # CEFR level to theta mapping
+            # CEFR level to theta mapping for filtering
             cefr_theta_map = {"A1": -2.0, "A2": -1.0, "B1": 0.0, "B2": 1.0, "C1": 2.0, "C2": 3.0}
             target_theta = cefr_theta_map.get(user_cefr, 0.0)
-            
-            # Filter cards within user's CEFR level range (±1 level for variety)
             theta_min = target_theta - 1.0
             theta_max = target_theta + 1.0
             
+            today = date.today()
+            
+            # Priority 1: Due cards (cards that are due for review)
             cur.execute("""
-                SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days
+                SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
+                       uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
                 FROM cards c
-                WHERE c.language = 'ru' 
+                INNER JOIN user_cards uc ON c.id = uc.card_id
+                WHERE uc.user_id = %s
+                AND c.language = 'ru'
                 AND c.payload ? 'theta'
                 AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
-                ORDER BY RANDOM()
+                AND uc.due_date <= %s
+                AND uc.state IN ('review', 'relearning')
+                ORDER BY uc.due_date ASC
                 LIMIT %s
-            """, (theta_min, theta_max, req.count))
+            """, (req.username, theta_min, theta_max, today, req.count))
             
-            rows = cur.fetchall()
+            due_cards = cur.fetchall()
+            remaining_count = req.count - len(due_cards)
             
-            # If no cards found at user's level, fall back to all cards
-            if not rows:
+            # Priority 2: Learning cards (cards in learning state)
+            learning_cards = []
+            if remaining_count > 0:
                 cur.execute("""
-                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days
+                    SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
+                           uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
                     FROM cards c
+                    INNER JOIN user_cards uc ON c.id = uc.card_id
+                    WHERE uc.user_id = %s
+                    AND c.language = 'ru'
+                    AND c.payload ? 'theta'
+                    AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
+                    AND uc.state = 'learning'
+                    ORDER BY uc.due_date ASC
+                    LIMIT %s
+                """, (req.username, theta_min, theta_max, remaining_count))
+                
+                learning_cards = cur.fetchall()
+                remaining_count -= len(learning_cards)
+            
+            # Priority 3: New cards (cards never seen before)
+            new_cards = []
+            if remaining_count > 0:
+                cur.execute("""
+                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
+                           NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
+                    FROM cards c
+                    LEFT JOIN user_cards uc ON c.id = uc.card_id AND uc.user_id = %s
                     WHERE c.language = 'ru'
+                    AND c.payload ? 'theta'
+                    AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
+                    AND uc.card_id IS NULL
                     ORDER BY RANDOM()
                     LIMIT %s
-                """, (req.count,))
-                rows = cur.fetchall()
+                """, (req.username, theta_min, theta_max, remaining_count))
+                
+                new_cards = cur.fetchall()
             
-            return {"items": rows, "user_cefr": user_cefr, "filtered_range": f"{theta_min:.1f} to {theta_max:.1f}"}
+            # Combine all cards
+            all_cards = list(due_cards) + list(learning_cards) + list(new_cards)
+            
+            # If still not enough cards, add some from outside CEFR range
+            if len(all_cards) < req.count:
+                remaining_count = req.count - len(all_cards)
+                cur.execute("""
+                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
+                           NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
+                    FROM cards c
+                    LEFT JOIN user_cards uc ON c.id = uc.card_id AND uc.user_id = %s
+                    WHERE c.language = 'ru'
+                    AND c.id NOT IN (SELECT unnest(%s::text[]))
+                    ORDER BY RANDOM()
+                    LIMIT %s
+                """, (req.username, [str(card['card_id']) for card in all_cards], remaining_count))
+                
+                fallback_cards = cur.fetchall()
+                all_cards.extend(fallback_cards)
+            
+            return {
+                "items": all_cards[:req.count],
+                "user_cefr": user_cefr,
+                "session_breakdown": {
+                    "due_cards": len(due_cards),
+                    "learning_cards": len(learning_cards),
+                    "new_cards": len(new_cards),
+                    "total": len(all_cards)
+                },
+                "filtered_range": f"{theta_min:.1f} to {theta_max:.1f}"
+            }
     finally:
         conn.close()
 
@@ -136,30 +188,91 @@ class PlacementAnswerRequest(BaseModel):
 
 @app.post("/v1/reviews")
 def submit_reviews(items: list[ReviewItem]):
+    """Submit review results and update FSRS scheduling"""
     try:
         conn = db()
-        with conn, conn.cursor() as cur:
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            updated_count = 0
+            now = datetime.now()
+            
             for item in items:
-                # For demo purposes, use default values for stability/difficulty
-                # In a real app, you'd load these from user_cards
-                stability = 3.0
-                difficulty = 0.3
-                stability, difficulty, next_days = fsrs_update(stability, difficulty, item.rating)
-                due_date = date.today() + timedelta(days=next_days)
-                
-                # Simplified: Just record the review (ignore user_cards for now)
                 try:
+                    # Get or create user_card record
                     cur.execute("""
-                        INSERT INTO review_log(user_id, card_id, rating, response_time_ms) 
-                        VALUES (%s, %s, %s, %s)
-                    """, (item.username, item.card_id, item.rating, item.response_time_ms or 0))
+                        SELECT * FROM user_cards 
+                        WHERE user_id = %s AND card_id = %s
+                    """, (item.username, item.card_id))
+                    
+                    user_card = cur.fetchone()
+                    
+                    if user_card:
+                        # Existing card - load FSRS state
+                        card = Card(
+                            due=user_card['due_date'] or now.date(),
+                            stability=user_card['stability'] or 0.0,
+                            difficulty=user_card['difficulty'] or 0.0,
+                            elapsed_days=user_card['elapsed_days'] or 0,
+                            scheduled_days=user_card['scheduled_days'] or 0,
+                            reps=user_card['reps'] or 0,
+                            lapses=user_card['lapses'] or 0,
+                            state=State[user_card['state'].upper()] if user_card['state'] else State.NEW,
+                            last_review=user_card['last_review']
+                        )
+                    else:
+                        # New card - initialize
+                        card = fsrs_scheduler.init_card(now)
+                    
+                    # Convert rating to FSRS Rating enum
+                    rating = Rating(item.rating)
+                    
+                    # Schedule the card using FSRS
+                    updated_card, review_log = schedule_card(card, rating, now)
+                    
+                    # Update or insert user_card record
+                    cur.execute("""
+                        INSERT INTO user_cards (
+                            user_id, card_id, stability, difficulty, interval_days,
+                            due_date, reps, lapses, last_review, state,
+                            scheduled_days, elapsed_days
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (user_id, card_id) 
+                        DO UPDATE SET
+                            stability = EXCLUDED.stability,
+                            difficulty = EXCLUDED.difficulty,
+                            interval_days = EXCLUDED.interval_days,
+                            due_date = EXCLUDED.due_date,
+                            reps = EXCLUDED.reps,
+                            lapses = EXCLUDED.lapses,
+                            last_review = EXCLUDED.last_review,
+                            state = EXCLUDED.state,
+                            scheduled_days = EXCLUDED.scheduled_days,
+                            elapsed_days = EXCLUDED.elapsed_days
+                    """, (
+                        item.username, item.card_id, updated_card.stability, updated_card.difficulty,
+                        updated_card.scheduled_days, updated_card.due.date(), updated_card.reps,
+                        updated_card.lapses, updated_card.last_review, updated_card.state.name.lower(),
+                        updated_card.scheduled_days, updated_card.elapsed_days
+                    ))
+                    
+                    # Insert review log
+                    cur.execute("""
+                        INSERT INTO review_log (user_id, card_id, rating, response_time_ms, ts) 
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (item.username, item.card_id, item.rating, item.response_time_ms or 0, now))
+                    
+                    updated_count += 1
+                    
                 except Exception as e:
-                    print(f"Database error: {e}")
+                    print(f"Error processing review for card {item.card_id}: {e}")
                     # Continue with other items even if one fails
                     continue
             
             conn.commit()
-            return {"updated": len(items)}
+            return {
+                "updated": updated_count,
+                "message": f"Successfully updated {updated_count} cards using FSRS v4"
+            }
+            
     except Exception as e:
         print(f"Review submission error: {e}")
         return {"error": str(e), "updated": 0}
