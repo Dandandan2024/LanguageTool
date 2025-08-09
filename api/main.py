@@ -22,6 +22,7 @@ allowed_origins = [
     "https://language-tool-o5tyo0qa9-daniels-projects-a9d5dc59.vercel.app",
     "https://language-tool-seven.vercel.app",
     "https://language-tool-5ldlf5vxv-daniels-projects-a9d5dc59.vercel.app",
+    "https://language-tool-2771lyetk-daniels-projects-a9d5dc59.vercel.app",  # Current Vercel URL
     # Allow all vercel.app subdomains as backup
     "*"
 ]
@@ -141,16 +142,29 @@ def sessions_next(req: NextRequest):
             # If still not enough cards, add some from outside CEFR range
             if len(all_cards) < req.count:
                 remaining_count = req.count - len(all_cards)
-                cur.execute("""
-                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
-                           NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
-                    FROM cards c
-                    LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
-                    WHERE c.language = 'ru'
-                    AND c.id::text NOT IN (SELECT unnest(%s::text[]))
-                    ORDER BY RANDOM()
-                    LIMIT %s
-                """, (req.username, [str(card['card_id']) for card in all_cards], remaining_count))
+                # Build exclusion list safely
+                used_card_ids = [str(card['card_id']) for card in all_cards]
+                if used_card_ids:
+                    cur.execute("""
+                        SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
+                               NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
+                        FROM cards c
+                        LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
+                        WHERE c.language = 'ru'
+                        AND c.id::text NOT IN (SELECT unnest(%s::text[]))
+                        ORDER BY RANDOM()
+                        LIMIT %s
+                    """, (req.username, used_card_ids, remaining_count))
+                else:
+                    cur.execute("""
+                        SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
+                               NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
+                        FROM cards c
+                        LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
+                        WHERE c.language = 'ru'
+                        ORDER BY RANDOM()
+                        LIMIT %s
+                    """, (req.username, remaining_count))
                 
                 fallback_cards = cur.fetchall()
                 all_cards.extend(fallback_cards)
@@ -166,6 +180,16 @@ def sessions_next(req: NextRequest):
                 },
                 "filtered_range": f"{theta_min:.1f} to {theta_max:.1f}"
             }
+    except Exception as e:
+        print(f"Sessions next error: {e}")
+        # Return a fallback response to prevent 500 error
+        return {
+            "items": [],
+            "user_cefr": "B1",
+            "session_breakdown": {"due_cards": 0, "learning_cards": 0, "new_cards": 0, "total": 0},
+            "filtered_range": "error",
+            "error": str(e)
+        }
     finally:
         conn.close()
 
