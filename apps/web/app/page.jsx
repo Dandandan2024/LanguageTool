@@ -77,6 +77,8 @@ export default function Home() {
       setPlacementLoading(true)
       setError(null)
       
+      console.log('Starting placement test with:', { username, claimedLevel })
+      
       const response = await fetch(`${API_BASE}/v1/placement/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -87,18 +89,24 @@ export default function Home() {
         })
       })
       
+      console.log('Placement start response status:', response.status)
+      
       if (!response.ok) {
-        throw new Error('Failed to start placement test')
+        const errorText = await response.text()
+        console.error('Placement start error response:', errorText)
+        throw new Error(`Failed to start placement test: ${response.status}`)
       }
       
       const data = await response.json()
+      console.log('Placement start data:', data)
+      
       setPlacementSession(data.session_id)
       setPlacementItem(data.item)
       setSelectedAnswer('')
       
     } catch (err) {
       console.error('Placement start error:', err)
-      setError('Failed to start placement test')
+      setError(`Failed to start placement test: ${err.message}`)
     } finally {
       setPlacementLoading(false)
     }
@@ -270,13 +278,20 @@ export default function Home() {
 
     const { type, payload } = card
 
+    // Debug logging
+    console.log('Placement card:', { type, payload })
+
+    if (!payload) {
+      return <p>Card payload missing</p>
+    }
+
     switch (type) {
       case 'cloze':
         return (
           <div style={{ textAlign: 'center', padding: '2rem' }}>
             <h2>Fill in the blank:</h2>
             <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.text}
+              {payload.text || 'No text available'}
             </p>
             {payload.translation && (
               <p style={{ fontSize: '1rem', color: '#6c757d', fontStyle: 'italic' }}>
@@ -296,7 +311,7 @@ export default function Home() {
           <div style={{ textAlign: 'center', padding: '2rem' }}>
             <h2>Vocabulary:</h2>
             <p style={{ fontSize: '2rem', margin: '1rem 0' }}>
-              {payload.word}
+              {payload.word || 'No word available'}
             </p>
           </div>
         )
@@ -306,13 +321,20 @@ export default function Home() {
           <div style={{ textAlign: 'center', padding: '2rem' }}>
             <h2>Translate:</h2>
             <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.russian || payload.spanish}
+              {payload.russian || payload.spanish || 'No sentence available'}
             </p>
           </div>
         )
       
       default:
-        return <p>Unknown card type: {type}</p>
+        return (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <p>Unknown card type: {type}</p>
+            <pre style={{ fontSize: '0.8rem', textAlign: 'left', backgroundColor: '#f8f9fa', padding: '1rem' }}>
+              {JSON.stringify(payload, null, 2)}
+            </pre>
+          </div>
+        )
     }
   }
 
