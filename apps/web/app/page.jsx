@@ -42,6 +42,7 @@ export default function Home() {
     
     try {
       setLoading(true)
+      console.log('API_BASE:', API_BASE) // Debug: show what URL we're using
       const response = await fetch(`${API_BASE}/v1/sessions/next`, {
         method: 'POST',
         headers: {
