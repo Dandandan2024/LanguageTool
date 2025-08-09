@@ -351,9 +351,20 @@ def submit_placement_answer(request: PlacementAnswerRequest):
             except (ValueError, TypeError):
                 user_rating = 2  # Default to "Hard" if invalid
             
-            # Convert rating to correctness for adaptive algorithm
-            # 1 = Again (wrong), 2 = Hard (partially correct), 3 = Good (correct), 4 = Easy (very correct)
-            is_correct = user_rating >= 3
+            # Convert rating to correctness and confidence for adaptive algorithm
+            # More nuanced interpretation for better placement accuracy
+            if user_rating == 1:  # Again - definitely wrong
+                is_correct = False
+                confidence = 1.0  # Very confident it's wrong
+            elif user_rating == 2:  # Hard - mostly wrong, some partial knowledge
+                is_correct = False  
+                confidence = 0.7  # Pretty confident it's wrong, but not completely
+            elif user_rating == 3:  # Good - correct
+                is_correct = True
+                confidence = 0.8  # Confident it's correct
+            else:  # Easy - definitely correct
+                is_correct = True
+                confidence = 1.0  # Very confident it's correct
             
             # Get the actual correct answer for logging purposes
             card_type = card_row.get('type', 'unknown')
@@ -365,11 +376,6 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                 correct_answer = card_payload.get('english', '')
             else:
                 correct_answer = "Rating-based assessment"
-            
-            # Update ability estimate with rating-based confidence
-            # Convert rating to confidence: 1=0.2, 2=0.5, 3=0.8, 4=1.0
-            confidence_map = {1: 0.2, 2: 0.5, 3: 0.8, 4: 1.0}
-            confidence = confidence_map.get(user_rating, 0.5)
             
             item_theta = card_payload.get('theta', 0.0)
             new_theta, new_se = cat_system.update_ability(

@@ -74,16 +74,19 @@ class PlacementCAT:
         else:
             likelihood = (1 - prob_correct) * confidence
             
-        # Simple Bayesian update (in practice, would use more sophisticated methods)
-        learning_rate = 0.3
+        # More aggressive Bayesian update for better placement accuracy
+        base_learning_rate = 0.5  # Increased from 0.3 for faster convergence
         
         if is_correct:
-            # Step up, but less aggressively if already confident
-            theta_change = learning_rate * (1 - prob_correct) * confidence
+            # Step up based on how unexpected the correct answer was
+            surprise_factor = (1 - prob_correct)  # Higher if item was harder than expected
+            theta_change = base_learning_rate * surprise_factor * confidence
             new_theta = current_theta + theta_change
         else:
-            # Step down more aggressively (compassion bias)
-            theta_change = learning_rate * prob_correct * confidence * 1.5  # 1.5x more aggressive
+            # Step down more aggressively - user doesn't know items at this level
+            surprise_factor = prob_correct  # Higher if we expected them to get it right
+            # Extra aggressive for placement (2x multiplier)
+            theta_change = base_learning_rate * surprise_factor * confidence * 2.0
             new_theta = current_theta - theta_change
             
         # Update standard error (decreases with more items)
@@ -92,6 +95,11 @@ class PlacementCAT:
         # Bounds checking
         new_theta = max(-3.0, min(4.0, new_theta))  # Keep within reasonable bounds
         new_se = max(0.1, new_se)  # Minimum SE
+        
+        # Debug logging
+        print(f"Theta update: {current_theta:.2f} -> {new_theta:.2f} (change: {new_theta-current_theta:+.2f})")
+        print(f"  Item difficulty: {item_theta:.2f}, Correct: {is_correct}, Confidence: {confidence:.2f}")
+        print(f"  Prob correct: {prob_correct:.2f}, SE: {current_se:.2f} -> {new_se:.2f}")
         
         return new_theta, new_se
     
