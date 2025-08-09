@@ -16,9 +16,10 @@ app = FastAPI(title="Adaptive SRS API", version="0.1.0")
 allowed_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    # Add your Vercel domain here after deployment
-    "https://*.vercel.app",
-    "https://adaptive-srs-*.vercel.app"
+    # Production Vercel domain
+    "https://language-tool-hs6owowje-daniels-projects-a9d5dc59.vercel.app",
+    # Allow all vercel.app subdomains as backup
+    "https://*.vercel.app"
 ]
 
 app.add_middleware(
