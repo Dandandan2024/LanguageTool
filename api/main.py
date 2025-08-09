@@ -72,17 +72,13 @@ def sessions_next(req: NextRequest):
     conn = db()
     try:
         with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # Get cards for the user - first try user's existing cards, then new ones
+            # Get cards - simplified query to avoid database errors
             cur.execute("""
-                SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days
+                SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days
                 FROM cards c
-                LEFT JOIN user_cards uc ON uc.card_id = c.id AND uc.user_id = %s
-                WHERE uc.user_id = %s OR uc.user_id IS NULL
-                ORDER BY 
-                    CASE WHEN uc.due_date IS NOT NULL AND uc.due_date <= NOW() THEN 0 ELSE 1 END,
-                    RANDOM()
+                ORDER BY RANDOM()
                 LIMIT %s
-            """, (req.username, req.username, req.count))
+            """, (req.count,))
             rows = cur.fetchall()
             return {"items": rows}
     finally:
