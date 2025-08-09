@@ -249,7 +249,7 @@ export default function Home() {
           <div style={{ textAlign: 'center', padding: '2rem' }}>
             <h2>Translate:</h2>
             <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.spanish}
+              {payload.russian || payload.spanish}
             </p>
             {showAnswer && (
               <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
@@ -257,6 +257,57 @@ export default function Home() {
                 <p><strong>Level:</strong> {payload.difficulty}</p>
               </div>
             )}
+          </div>
+        )
+      
+      default:
+        return <p>Unknown card type: {type}</p>
+    }
+  }
+
+  const renderPlacementCard = (card) => {
+    if (!card) return <p>No card available</p>
+
+    const { type, payload } = card
+
+    switch (type) {
+      case 'cloze':
+        return (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <h2>Fill in the blank:</h2>
+            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
+              {payload.text}
+            </p>
+            {payload.translation && (
+              <p style={{ fontSize: '1rem', color: '#6c757d', fontStyle: 'italic' }}>
+                {payload.translation}
+              </p>
+            )}
+            {payload.hints && payload.hints.length > 0 && (
+              <p style={{ fontSize: '0.9rem', color: '#28a745' }}>
+                💡 Hint: {payload.hints[0]}
+              </p>
+            )}
+          </div>
+        )
+      
+      case 'vocabulary':
+        return (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <h2>Vocabulary:</h2>
+            <p style={{ fontSize: '2rem', margin: '1rem 0' }}>
+              {payload.word}
+            </p>
+          </div>
+        )
+      
+      case 'sentence':
+        return (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <h2>Translate:</h2>
+            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
+              {payload.russian || payload.spanish}
+            </p>
           </div>
         )
       
@@ -574,91 +625,26 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{ backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '8px', marginBottom: '2rem' }}>
-            {placementItem.type === 'vocabulary' && (
-              <>
-                <h3 style={{ marginBottom: '1.5rem' }}>What does this Russian word mean?</h3>
-                <div style={{ fontSize: '2rem', textAlign: 'center', margin: '1rem 0', color: '#007bff', fontWeight: 'bold' }}>
-                  {placementItem.word}
-                </div>
-                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                  <input
-                    type="text"
-                    placeholder="Enter English translation..."
-                    value={selectedAnswer}
-                    onChange={(e) => setSelectedAnswer(e.target.value)}
-                    style={{
-                      padding: '1rem',
-                      fontSize: '1.1rem',
-                      border: '2px solid #dee2e6',
-                      borderRadius: '8px',
-                      width: '100%',
-                      maxWidth: '400px'
-                    }}
-                  />
-                </div>
-              </>
-            )}
-
-            {placementItem.type === 'cloze' && (
-              <>
-                <h3 style={{ marginBottom: '1.5rem' }}>Fill in the blank:</h3>
-                <div style={{ fontSize: '1.3rem', textAlign: 'center', margin: '1rem 0', color: '#495057' }}>
-                  {placementItem.text}
-                </div>
-                {placementItem.translation && (
-                  <div style={{ fontSize: '1rem', textAlign: 'center', color: '#6c757d', fontStyle: 'italic', marginBottom: '1rem' }}>
-                    {placementItem.translation}
-                  </div>
-                )}
-                {placementItem.hints && placementItem.hints.length > 0 && (
-                  <div style={{ fontSize: '0.9rem', textAlign: 'center', color: '#28a745', marginBottom: '1rem' }}>
-                    💡 Hint: {placementItem.hints[0]}
-                  </div>
-                )}
-                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                  <input
-                    type="text"
-                    placeholder="Enter your answer..."
-                    value={selectedAnswer}
-                    onChange={(e) => setSelectedAnswer(e.target.value)}
-                    style={{
-                      padding: '1rem',
-                      fontSize: '1.1rem',
-                      border: '2px solid #dee2e6',
-                      borderRadius: '8px',
-                      width: '100%',
-                      maxWidth: '300px'
-                    }}
-                  />
-                </div>
-              </>
-            )}
-
-            {placementItem.type === 'sentence' && (
-              <>
-                <h3 style={{ marginBottom: '1.5rem' }}>Translate this Russian sentence:</h3>
-                <div style={{ fontSize: '1.3rem', textAlign: 'center', margin: '1rem 0', color: '#007bff', fontWeight: 'bold' }}>
-                  {placementItem.russian}
-                </div>
-                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                  <input
-                    type="text"
-                    placeholder="Enter English translation..."
-                    value={selectedAnswer}
-                    onChange={(e) => setSelectedAnswer(e.target.value)}
-                    style={{
-                      padding: '1rem',
-                      fontSize: '1.1rem',
-                      border: '2px solid #dee2e6',
-                      borderRadius: '8px',
-                      width: '100%',
-                      maxWidth: '500px'
-                    }}
-                  />
-                </div>
-              </>
-            )}
+          {/* Use placement card rendering (no answer reveal) */}
+          {renderPlacementCard(placementItem)}
+          
+          {/* Add input field for user answer */}
+          <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+            <input
+              type="text"
+              placeholder="Enter your answer..."
+              value={selectedAnswer}
+              onChange={(e) => setSelectedAnswer(e.target.value)}
+              style={{
+                padding: '1rem',
+                fontSize: '1.1rem',
+                border: '2px solid #dee2e6',
+                borderRadius: '8px',
+                width: '100%',
+                maxWidth: '400px',
+                marginTop: '1rem'
+              }}
+            />
           </div>
 
           <div style={{ textAlign: 'center' }}>
