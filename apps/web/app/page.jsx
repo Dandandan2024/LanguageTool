@@ -384,7 +384,7 @@ export default function Home() {
   if (!isUsernameSet) {
     return (
       <main style={{padding: 24, maxWidth: 720, margin: '0 auto', textAlign: 'center'}}>
-        <h1>Adaptive SRS — Language Learning v5.0 FINAL</h1>
+        <h1>🧪 Adaptive SRS — Language Learning v5.0 FINAL (TEST BRANCH)</h1>
         <div style={{ marginTop: '2rem' }}>
           <h2>Welcome! 👋</h2>
           <p>Enter your name to start learning and track your progress:</p>
