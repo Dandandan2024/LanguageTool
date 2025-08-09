@@ -26,7 +26,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -115,6 +115,14 @@ def root():
 @app.get("/health")
 def health():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.options("/v1/sessions/next")
+def sessions_next_options():
+    return {"message": "OK"}
+
+@app.options("/v1/reviews")
+def reviews_options():
+    return {"message": "OK"}
 
 if __name__ == "__main__":
     import uvicorn
