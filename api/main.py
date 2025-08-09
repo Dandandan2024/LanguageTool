@@ -284,11 +284,21 @@ def start_placement_test(request: PlacementStartRequest):
                 raise HTTPException(status_code=404, detail="No placement items available")
             
             # Select best first item
-            first_item = cat_system.select_next_item(session_data['theta'], available_items)
+            selected_item = cat_system.select_next_item(session_data['theta'], available_items)
+            
+            if not selected_item:
+                raise HTTPException(status_code=404, detail="No suitable item found")
+            
+            # Format item to match frontend expectations (type, payload structure)
+            formatted_item = {
+                "id": selected_item['id'],
+                "type": selected_item['type'],
+                "payload": {k: v for k, v in selected_item.items() if k not in ['id', 'type']}
+            }
             
             return {
                 "session_id": session_id,
-                "item": first_item,
+                "item": formatted_item,
                 "progress": {
                     "items_completed": 0,
                     "estimated_level": cat_system.get_final_cefr(session_data['theta']),
@@ -443,7 +453,25 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                     return {"complete": True, "results": {"cefr_level": final_cefr}}
                 
                 # Select next best item
-                next_item = cat_system.select_next_item(new_theta, available_items)
+                selected_item = cat_system.select_next_item(new_theta, available_items)
+                
+                if not selected_item:
+                    # Force completion if no suitable item found
+                    final_cefr = cat_system.get_final_cefr(new_theta)
+                    cur.execute("""
+                        UPDATE placement_sessions 
+                        SET is_complete = TRUE, final_cefr = %s, final_theta = %s
+                        WHERE id = %s
+                    """, (final_cefr, new_theta, request.session_id))
+                    
+                    return {"complete": True, "results": {"cefr_level": final_cefr}}
+                
+                # Format item to match frontend expectations (type, payload structure)
+                formatted_item = {
+                    "id": selected_item['id'],
+                    "type": selected_item['type'],
+                    "payload": {k: v for k, v in selected_item.items() if k not in ['id', 'type']}
+                }
                 
                 # Update session
                 cur.execute("""
@@ -454,7 +482,7 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                 
                 return {
                     "complete": False,
-                    "item": next_item,
+                    "item": formatted_item,
                     "feedback": {
                         "was_correct": is_correct,
                         "correct_answer": correct_answer
