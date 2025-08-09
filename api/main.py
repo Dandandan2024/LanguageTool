@@ -6,6 +6,7 @@ import os, json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
+from placement_cat import PlacementCAT
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -90,6 +91,17 @@ class ReviewItem(BaseModel):
     response_time_ms: int | None = None
     username: str = "anonymous"
 
+class PlacementStartRequest(BaseModel):
+    username: str
+    language: str = "en"
+    claimed_level: str | None = None
+
+class PlacementAnswerRequest(BaseModel):
+    session_id: str
+    card_id: str
+    user_answer: str
+    response_time_ms: int | None = None
+
 @app.post("/v1/reviews")
 def submit_reviews(items: list[ReviewItem]):
     try:
@@ -141,6 +153,14 @@ def reviews_options():
 
 @app.options("/v1/stats/{username}")
 def stats_options(username: str):
+    return {"message": "OK"}
+
+@app.options("/v1/placement/start")
+def placement_start_options():
+    return {"message": "OK"}
+
+@app.options("/v1/placement/answer")
+def placement_answer_options():
     return {"message": "OK"}
 
 @app.get("/v1/stats/{username}")
@@ -218,6 +238,218 @@ def get_user_stats(username: str):
         }
     finally:
         conn.close()
+
+# Initialize CAT system
+cat_system = PlacementCAT()
+
+@app.post("/v1/placement/start")
+def start_placement_test(request: PlacementStartRequest):
+    """Start a new adaptive placement test"""
+    try:
+        conn = db()
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Create new placement session
+            session_data = cat_system.start_session(request.claimed_level)
+            
+            cur.execute("""
+                INSERT INTO placement_sessions (user_id, language, current_theta, theta_se, items_completed)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """, (request.username, request.language, session_data['theta'], 
+                  session_data['se'], session_data['items_completed']))
+            
+            session_id = cur.fetchone()['id']
+            
+            # Get first item
+            cur.execute("""
+                SELECT id, payload FROM cards 
+                WHERE type = 'placement' AND language = %s
+                ORDER BY RANDOM()
+                LIMIT 20
+            """, (request.language,))
+            
+            available_items = []
+            for row in cur.fetchall():
+                payload = row['payload']
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+                available_items.append({
+                    'id': row['id'],
+                    'theta': payload.get('theta', 0.0),
+                    **payload
+                })
+            
+            if not available_items:
+                raise HTTPException(status_code=404, detail="No placement items available")
+            
+            # Select best first item
+            first_item = cat_system.select_next_item(session_data['theta'], available_items)
+            
+            return {
+                "session_id": session_id,
+                "item": first_item,
+                "progress": {
+                    "items_completed": 0,
+                    "estimated_level": cat_system.get_final_cefr(session_data['theta']),
+                    "confidence_interval": cat_system.get_confidence_interval(session_data['theta'], session_data['se'])
+                }
+            }
+            
+    except Exception as e:
+        print(f"Placement start error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+@app.post("/v1/placement/answer")
+def submit_placement_answer(request: PlacementAnswerRequest):
+    """Submit answer and get next placement item"""
+    try:
+        conn = db()
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Get current session
+            cur.execute("""
+                SELECT * FROM placement_sessions WHERE id = %s
+            """, (request.session_id,))
+            
+            session = cur.fetchone()
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+            
+            if session['is_complete']:
+                raise HTTPException(status_code=400, detail="Session already complete")
+            
+            # Get the item that was answered
+            cur.execute("""
+                SELECT payload FROM cards WHERE id = %s
+            """, (request.card_id,))
+            
+            card_row = cur.fetchone()
+            if not card_row:
+                raise HTTPException(status_code=404, detail="Card not found")
+                
+            card_payload = card_row['payload']
+            if isinstance(card_payload, str):
+                card_payload = json.loads(card_payload)
+            
+            # Check if answer is correct
+            correct_answer = card_payload.get('answer', '').lower()
+            user_answer = request.user_answer.lower()
+            is_correct = user_answer == correct_answer
+            
+            # Update ability estimate
+            item_theta = card_payload.get('theta', 0.0)
+            new_theta, new_se = cat_system.update_ability(
+                session['current_theta'], 
+                session['theta_se'], 
+                item_theta, 
+                is_correct
+            )
+            
+            # Record response
+            cur.execute("""
+                INSERT INTO placement_responses 
+                (session_id, card_id, user_response, correct_answer, is_correct, 
+                 response_time_ms, theta_before, theta_after, se_before, se_after)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (request.session_id, request.card_id, request.user_answer, 
+                  correct_answer, is_correct, request.response_time_ms,
+                  session['current_theta'], new_theta, session['theta_se'], new_se))
+            
+            # Update session
+            items_completed = session['items_completed'] + 1
+            should_stop = cat_system.should_stop(new_se, items_completed)
+            
+            if should_stop:
+                # Complete the session
+                final_cefr = cat_system.get_final_cefr(new_theta)
+                known_words = cat_system.generate_known_words(final_cefr, session['language'])
+                
+                cur.execute("""
+                    UPDATE placement_sessions 
+                    SET current_theta = %s, theta_se = %s, items_completed = %s,
+                        is_complete = TRUE, final_cefr = %s, final_theta = %s,
+                        updated_at = now()
+                    WHERE id = %s
+                """, (new_theta, new_se, items_completed, final_cefr, new_theta, request.session_id))
+                
+                return {
+                    "complete": True,
+                    "results": {
+                        "cefr_level": final_cefr,
+                        "theta": new_theta,
+                        "confidence_interval": cat_system.get_confidence_interval(new_theta, new_se),
+                        "items_completed": items_completed,
+                        "known_words": known_words[:50]  # First 50 words
+                    }
+                }
+            else:
+                # Get next item
+                cur.execute("""
+                    SELECT id FROM placement_responses WHERE session_id = %s
+                """, (request.session_id,))
+                used_items = [row['id'] for row in cur.fetchall()]
+                
+                cur.execute("""
+                    SELECT id, payload FROM cards 
+                    WHERE type = 'placement' AND language = %s AND id NOT IN %s
+                    ORDER BY RANDOM()
+                    LIMIT 10
+                """, (session['language'], tuple(used_items) if used_items else ('',)))
+                
+                available_items = []
+                for row in cur.fetchall():
+                    payload = row['payload']
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    available_items.append({
+                        'id': row['id'],
+                        'theta': payload.get('theta', 0.0),
+                        **payload
+                    })
+                
+                if not available_items:
+                    # Force completion if no more items
+                    final_cefr = cat_system.get_final_cefr(new_theta)
+                    cur.execute("""
+                        UPDATE placement_sessions 
+                        SET is_complete = TRUE, final_cefr = %s, final_theta = %s
+                        WHERE id = %s
+                    """, (final_cefr, new_theta, request.session_id))
+                    
+                    return {"complete": True, "results": {"cefr_level": final_cefr}}
+                
+                # Select next best item
+                next_item = cat_system.select_next_item(new_theta, available_items)
+                
+                # Update session
+                cur.execute("""
+                    UPDATE placement_sessions 
+                    SET current_theta = %s, theta_se = %s, items_completed = %s, updated_at = now()
+                    WHERE id = %s
+                """, (new_theta, new_se, items_completed, request.session_id))
+                
+                return {
+                    "complete": False,
+                    "item": next_item,
+                    "feedback": {
+                        "was_correct": is_correct,
+                        "correct_answer": correct_answer
+                    },
+                    "progress": {
+                        "items_completed": items_completed,
+                        "estimated_level": cat_system.get_final_cefr(new_theta),
+                        "confidence_interval": cat_system.get_confidence_interval(new_theta, new_se)
+                    }
+                }
+                
+    except Exception as e:
+        print(f"Placement answer error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 if __name__ == "__main__":
     import uvicorn

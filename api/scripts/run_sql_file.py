@@ -40,5 +40,5 @@ def run_sql_file(filename):
         conn.close()
 
 if __name__ == "__main__":
-    # Run your new Russian content SQL file
-    run_sql_file("russian_cards_fixed_v2.sql")
+    # Run placement cards setup
+    run_sql_file("create_placement_cards.sql")
