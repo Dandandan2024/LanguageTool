@@ -139,6 +139,86 @@ def sessions_next_options():
 def reviews_options():
     return {"message": "OK"}
 
+@app.options("/v1/stats/{username}")
+def stats_options(username: str):
+    return {"message": "OK"}
+
+@app.get("/v1/stats/{username}")
+def get_user_stats(username: str):
+    """Get comprehensive statistics for a user"""
+    conn = db()
+    try:
+        with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Total reviews
+            cur.execute("""
+                SELECT COUNT(*) as total_reviews
+                FROM review_log 
+                WHERE user_id = %s
+            """, (username,))
+            total_reviews = cur.fetchone()['total_reviews'] or 0
+            
+            # Reviews by rating (accuracy)
+            cur.execute("""
+                SELECT rating, COUNT(*) as count
+                FROM review_log 
+                WHERE user_id = %s
+                GROUP BY rating
+                ORDER BY rating
+            """, (username,))
+            ratings_breakdown = cur.fetchall()
+            
+            # Daily activity (last 30 days)
+            cur.execute("""
+                SELECT DATE(created_at) as date, COUNT(*) as count
+                FROM review_log 
+                WHERE user_id = %s 
+                AND created_at >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY DATE(created_at)
+                ORDER BY date DESC
+            """, (username,))
+            daily_activity = cur.fetchall()
+            
+            # Language breakdown
+            cur.execute("""
+                SELECT c.language, COUNT(*) as reviews
+                FROM review_log r
+                JOIN cards c ON r.card_id = c.id
+                WHERE r.user_id = %s
+                GROUP BY c.language
+            """, (username,))
+            language_breakdown = cur.fetchall()
+            
+            # Calculate accuracy
+            good_reviews = sum(r['count'] for r in ratings_breakdown if r['rating'] >= 3)
+            accuracy = (good_reviews / total_reviews * 100) if total_reviews > 0 else 0
+            
+            # Study streak (simplified - days with reviews)
+            study_streak = len(daily_activity)
+            
+            return {
+                "username": username,
+                "total_reviews": total_reviews,
+                "accuracy_percentage": round(accuracy, 1),
+                "study_streak_days": study_streak,
+                "ratings_breakdown": ratings_breakdown,
+                "daily_activity": daily_activity,
+                "language_breakdown": language_breakdown
+            }
+            
+    except Exception as e:
+        print(f"Stats error: {e}")
+        return {
+            "username": username,
+            "total_reviews": 0,
+            "accuracy_percentage": 0,
+            "study_streak_days": 0,
+            "ratings_breakdown": [],
+            "daily_activity": [],
+            "language_breakdown": []
+        }
+    finally:
+        conn.close()
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))

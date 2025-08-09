@@ -10,6 +10,9 @@ export default function Home() {
   const [error, setError] = useState(null)
   const [username, setUsername] = useState('')
   const [isUsernameSet, setIsUsernameSet] = useState(false)
+  const [currentView, setCurrentView] = useState('study') // 'study' or 'stats'
+  const [stats, setStats] = useState(null)
+  const [statsLoading, setStatsLoading] = useState(false)
 
   // Use environment variable for API URL, fallback to local development
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
@@ -35,6 +38,29 @@ export default function Home() {
     setCurrentCardIndex(0)
     setShowAnswer(false)
     setUsername('')
+    setCurrentView('study')
+    setStats(null)
+  }
+
+  const fetchStats = async () => {
+    if (!username) return
+    
+    try {
+      setStatsLoading(true)
+      const response = await fetch(`${API_BASE}/v1/stats/${username}`)
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch stats')
+      }
+      
+      const data = await response.json()
+      setStats(data)
+    } catch (err) {
+      console.error('Stats error:', err)
+      setError('Failed to load statistics')
+    } finally {
+      setStatsLoading(false)
+    }
   }
 
   const fetchCards = async () => {
@@ -236,6 +262,86 @@ export default function Home() {
 
   const currentCard = cards[currentCardIndex]
 
+  const renderStatsView = () => {
+    if (statsLoading) {
+      return <div style={{ textAlign: 'center', padding: '2rem' }}>Loading statistics...</div>
+    }
+
+    if (!stats) {
+      return <div style={{ textAlign: 'center', padding: '2rem' }}>No statistics available</div>
+    }
+
+    return (
+      <div>
+        <h2>📊 Your Learning Statistics</h2>
+        
+        {/* Summary Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+          <div style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', color: '#495057' }}>Total Reviews</h3>
+            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#007bff' }}>{stats.total_reviews}</div>
+          </div>
+          
+          <div style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', color: '#495057' }}>Accuracy</h3>
+            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#28a745' }}>{stats.accuracy_percentage}%</div>
+          </div>
+          
+          <div style={{ padding: '1rem', backgroundColor: '#f8f9fa', borderRadius: '8px', textAlign: 'center' }}>
+            <h3 style={{ margin: '0 0 0.5rem 0', color: '#495057' }}>Study Streak</h3>
+            <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#fd7e14' }}>{stats.study_streak_days} days</div>
+          </div>
+        </div>
+
+        {/* Language Breakdown */}
+        {stats.language_breakdown.length > 0 && (
+          <div style={{ marginBottom: '2rem' }}>
+            <h3>🌍 Languages</h3>
+            {stats.language_breakdown.map(lang => (
+              <div key={lang.language} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #eee' }}>
+                <span>{lang.language.toUpperCase()}</span>
+                <span><strong>{lang.reviews}</strong> reviews</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Rating Breakdown */}
+        {stats.ratings_breakdown.length > 0 && (
+          <div style={{ marginBottom: '2rem' }}>
+            <h3>⭐ Rating Distribution</h3>
+            {stats.ratings_breakdown.map(rating => {
+              const ratingLabels = { 1: 'Again', 2: 'Hard', 3: 'Good', 4: 'Easy' }
+              const colors = { 1: '#dc3545', 2: '#fd7e14', 3: '#28a745', 4: '#007bff' }
+              return (
+                <div key={rating.rating} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem 0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <div style={{ width: '12px', height: '12px', backgroundColor: colors[rating.rating], borderRadius: '50%' }}></div>
+                    <span>{ratingLabels[rating.rating]}</span>
+                  </div>
+                  <span><strong>{rating.count}</strong></span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Recent Activity */}
+        {stats.daily_activity.length > 0 && (
+          <div>
+            <h3>📈 Recent Activity</h3>
+            {stats.daily_activity.slice(0, 10).map(day => (
+              <div key={day.date} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #eee' }}>
+                <span>{new Date(day.date).toLocaleDateString()}</span>
+                <span><strong>{day.count}</strong> reviews</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <main style={{padding: 24, maxWidth: 720, margin: '0 auto'}}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -255,10 +361,47 @@ export default function Home() {
           Change User
         </button>
       </div>
-      <p>👤 Learning as: <strong>{username}</strong></p>
-      <p>Card {currentCardIndex + 1} of {cards.length}</p>
       
-      {renderCard(currentCard)}
+      {/* Navigation */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+        <button
+          onClick={() => setCurrentView('study')}
+          style={{
+            padding: '0.75rem 1.5rem',
+            backgroundColor: currentView === 'study' ? '#007bff' : '#e9ecef',
+            color: currentView === 'study' ? 'white' : '#495057',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}
+        >
+          📚 Study
+        </button>
+        <button
+          onClick={() => {
+            setCurrentView('stats')
+            fetchStats()
+          }}
+          style={{
+            padding: '0.75rem 1.5rem',
+            backgroundColor: currentView === 'stats' ? '#007bff' : '#e9ecef',
+            color: currentView === 'stats' ? 'white' : '#495057',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer'
+          }}
+        >
+          📊 Statistics
+        </button>
+      </div>
+
+      <p>👤 Learning as: <strong>{username}</strong></p>
+      
+      {currentView === 'stats' ? renderStatsView() : (
+        <>
+          <p>Card {currentCardIndex + 1} of {cards.length}</p>
+          
+          {renderCard(currentCard)}
       
       {!showAnswer ? (
         <div style={{ textAlign: 'center', marginTop: '2rem' }}>
@@ -335,6 +478,8 @@ export default function Home() {
             </button>
           </div>
         </div>
+      )}
+        </>
       )}
     </main>
   )
