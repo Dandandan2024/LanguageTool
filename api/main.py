@@ -62,6 +62,7 @@ def fsrs_update(stability: float, difficulty: float, rating: int):
 
 class NextRequest(BaseModel):
     count: int = 20
+    username: str = "anonymous"
 
 @app.post("/v1/sessions/next")
 def sessions_next(req: NextRequest):
@@ -85,6 +86,7 @@ class ReviewItem(BaseModel):
     card_id: str
     rating: int
     response_time_ms: int | None = None
+    username: str = "anonymous"
 
 @app.post("/v1/reviews")
 def submit_reviews(items: list[ReviewItem]):
@@ -99,11 +101,11 @@ def submit_reviews(items: list[ReviewItem]):
                 stability, difficulty, next_days = fsrs_update(stability, difficulty, item.rating)
                 due_date = date.today() + timedelta(days=next_days)
                 
-                # Record review in review_log
+                # Record review in review_log with username
                 cur.execute("""
                     INSERT INTO review_log(user_id, card_id, rating, response_time_ms) 
-                    VALUES (gen_random_uuid(), %s, %s, %s)
-                """, (item.card_id, item.rating, item.response_time_ms))
+                    VALUES (%s, %s, %s, %s)
+                """, (item.username, item.card_id, item.rating, item.response_time_ms))
             
             return {"updated": len(items)}
     finally:
