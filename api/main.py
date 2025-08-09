@@ -93,7 +93,7 @@ class ReviewItem(BaseModel):
 
 class PlacementStartRequest(BaseModel):
     username: str
-    language: str = "en"
+    language: str = "ru"
     claimed_level: str | None = None
 
 class PlacementAnswerRequest(BaseModel):
@@ -260,13 +260,13 @@ def start_placement_test(request: PlacementStartRequest):
             
             session_id = cur.fetchone()['id']
             
-            # Get first item
+            # Get Russian cards for placement (all types with theta values)
             cur.execute("""
-                SELECT id, payload FROM cards 
-                WHERE type = 'placement' AND language = %s
+                SELECT id, type, payload FROM cards 
+                WHERE language = 'ru' AND payload ? 'theta'
                 ORDER BY RANDOM()
-                LIMIT 20
-            """, (request.language,))
+                LIMIT 50
+            """, ())
             
             available_items = []
             for row in cur.fetchall():
@@ -275,6 +275,7 @@ def start_placement_test(request: PlacementStartRequest):
                     payload = json.loads(payload)
                 available_items.append({
                     'id': row['id'],
+                    'type': row['type'],
                     'theta': payload.get('theta', 0.0),
                     **payload
                 })
@@ -322,7 +323,7 @@ def submit_placement_answer(request: PlacementAnswerRequest):
             
             # Get the item that was answered
             cur.execute("""
-                SELECT payload FROM cards WHERE id = %s
+                SELECT type, payload FROM cards WHERE id = %s
             """, (request.card_id,))
             
             card_row = cur.fetchone()
@@ -333,10 +334,30 @@ def submit_placement_answer(request: PlacementAnswerRequest):
             if isinstance(card_payload, str):
                 card_payload = json.loads(card_payload)
             
-            # Check if answer is correct
-            correct_answer = card_payload.get('answer', '').lower()
-            user_answer = request.user_answer.lower()
-            is_correct = user_answer == correct_answer
+            # Check if answer is correct based on card type
+            card_type = card_row.get('type', 'unknown')
+            is_correct = False
+            correct_answer = ""
+            
+            if card_type == 'cloze':
+                correct_answer = card_payload.get('answer', '').lower()
+                user_answer = request.user_answer.lower()
+                is_correct = user_answer == correct_answer
+            elif card_type == 'vocabulary':
+                # For vocabulary, check if translation is correct
+                correct_answer = card_payload.get('translation', '').lower()
+                user_answer = request.user_answer.lower()
+                is_correct = user_answer == correct_answer
+            elif card_type == 'sentence':
+                # For sentence, check if English translation is correct
+                correct_answer = card_payload.get('english', '').lower()
+                user_answer = request.user_answer.lower()
+                is_correct = user_answer == correct_answer
+            else:
+                # Fallback for unknown types
+                correct_answer = card_payload.get('answer', card_payload.get('translation', card_payload.get('english', ''))).lower()
+                user_answer = request.user_answer.lower()
+                is_correct = user_answer == correct_answer
             
             # Update ability estimate
             item_theta = card_payload.get('theta', 0.0)
@@ -392,11 +413,11 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                 used_items = [row['id'] for row in cur.fetchall()]
                 
                 cur.execute("""
-                    SELECT id, payload FROM cards 
-                    WHERE type = 'placement' AND language = %s AND id NOT IN %s
+                    SELECT id, type, payload FROM cards 
+                    WHERE language = 'ru' AND payload ? 'theta' AND id NOT IN %s
                     ORDER BY RANDOM()
-                    LIMIT 10
-                """, (session['language'], tuple(used_items) if used_items else ('',)))
+                    LIMIT 20
+                """, (tuple(used_items) if used_items else ('',),))
                 
                 available_items = []
                 for row in cur.fetchall():
@@ -405,6 +426,7 @@ def submit_placement_answer(request: PlacementAnswerRequest):
                         payload = json.loads(payload)
                     available_items.append({
                         'id': row['id'],
+                        'type': row['type'],
                         'theta': payload.get('theta', 0.0),
                         **payload
                     })

@@ -82,7 +82,7 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: username,
-          language: 'en',
+          language: 'ru',
           claimed_level: claimedLevel
         })
       })
@@ -429,9 +429,9 @@ export default function Home() {
     if (!placementSession && !placementResults) {
       return (
         <div style={{ textAlign: 'center', padding: '2rem' }}>
-          <h2>🎯 Adaptive Placement Test</h2>
+          <h2>🎯 Russian Placement Test</h2>
           <p style={{ fontSize: '1.1rem', lineHeight: '1.6', marginBottom: '2rem', color: '#495057' }}>
-            This intelligent test will determine your CEFR level (A1-C2) in just 7-12 questions.
+            This intelligent test will determine your Russian CEFR level (A1-C2) using your existing flashcard content.
             <br />
             The questions adapt to your ability - getting harder or easier based on your answers.
           </p>
@@ -439,11 +439,12 @@ export default function Home() {
           <div style={{ backgroundColor: '#f8f9fa', padding: '1.5rem', borderRadius: '8px', marginBottom: '2rem', textAlign: 'left' }}>
             <h3 style={{ margin: '0 0 1rem 0' }}>📋 How it works:</h3>
             <ul style={{ margin: 0, paddingLeft: '1.5rem' }}>
-              <li>Start at intermediate level (B1)</li>
+              <li>Uses your existing Russian flashcard content</li>
+              <li>Mix of vocabulary, fill-in-the-blank, and translation</li>
               <li>Questions get harder if you're doing well</li>
               <li>Questions get easier if you're struggling</li>
               <li>Stops when we're confident about your level</li>
-              <li>Get your CEFR level + personalized word list</li>
+              <li>Get your Russian CEFR level + personalized word list</li>
             </ul>
           </div>
 
@@ -574,31 +575,90 @@ export default function Home() {
           </div>
 
           <div style={{ backgroundColor: '#f8f9fa', padding: '2rem', borderRadius: '8px', marginBottom: '2rem' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Complete the sentence:</h3>
-            <p style={{ fontSize: '1.2rem', lineHeight: '1.6', marginBottom: '2rem' }}>
-              {placementItem.text}
-            </p>
+            {placementItem.type === 'vocabulary' && (
+              <>
+                <h3 style={{ marginBottom: '1.5rem' }}>What does this Russian word mean?</h3>
+                <div style={{ fontSize: '2rem', textAlign: 'center', margin: '1rem 0', color: '#007bff', fontWeight: 'bold' }}>
+                  {placementItem.word}
+                </div>
+                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Enter English translation..."
+                    value={selectedAnswer}
+                    onChange={(e) => setSelectedAnswer(e.target.value)}
+                    style={{
+                      padding: '1rem',
+                      fontSize: '1.1rem',
+                      border: '2px solid #dee2e6',
+                      borderRadius: '8px',
+                      width: '100%',
+                      maxWidth: '400px'
+                    }}
+                  />
+                </div>
+              </>
+            )}
 
-            <div style={{ display: 'grid', gap: '1rem' }}>
-              {placementItem.options?.map((option, index) => (
-                <button
-                  key={index}
-                  onClick={() => setSelectedAnswer(option)}
-                  style={{
-                    padding: '1rem',
-                    backgroundColor: selectedAnswer === option ? '#007bff' : 'white',
-                    color: selectedAnswer === option ? 'white' : '#495057',
-                    border: selectedAnswer === option ? '2px solid #007bff' : '2px solid #dee2e6',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    fontSize: '1rem'
-                  }}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
+            {placementItem.type === 'cloze' && (
+              <>
+                <h3 style={{ marginBottom: '1.5rem' }}>Fill in the blank:</h3>
+                <div style={{ fontSize: '1.3rem', textAlign: 'center', margin: '1rem 0', color: '#495057' }}>
+                  {placementItem.text}
+                </div>
+                {placementItem.translation && (
+                  <div style={{ fontSize: '1rem', textAlign: 'center', color: '#6c757d', fontStyle: 'italic', marginBottom: '1rem' }}>
+                    {placementItem.translation}
+                  </div>
+                )}
+                {placementItem.hints && placementItem.hints.length > 0 && (
+                  <div style={{ fontSize: '0.9rem', textAlign: 'center', color: '#28a745', marginBottom: '1rem' }}>
+                    💡 Hint: {placementItem.hints[0]}
+                  </div>
+                )}
+                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Enter your answer..."
+                    value={selectedAnswer}
+                    onChange={(e) => setSelectedAnswer(e.target.value)}
+                    style={{
+                      padding: '1rem',
+                      fontSize: '1.1rem',
+                      border: '2px solid #dee2e6',
+                      borderRadius: '8px',
+                      width: '100%',
+                      maxWidth: '300px'
+                    }}
+                  />
+                </div>
+              </>
+            )}
+
+            {placementItem.type === 'sentence' && (
+              <>
+                <h3 style={{ marginBottom: '1.5rem' }}>Translate this Russian sentence:</h3>
+                <div style={{ fontSize: '1.3rem', textAlign: 'center', margin: '1rem 0', color: '#007bff', fontWeight: 'bold' }}>
+                  {placementItem.russian}
+                </div>
+                <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                  <input
+                    type="text"
+                    placeholder="Enter English translation..."
+                    value={selectedAnswer}
+                    onChange={(e) => setSelectedAnswer(e.target.value)}
+                    style={{
+                      padding: '1rem',
+                      fontSize: '1.1rem',
+                      border: '2px solid #dee2e6',
+                      borderRadius: '8px',
+                      width: '100%',
+                      maxWidth: '500px'
+                    }}
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           <div style={{ textAlign: 'center' }}>
