@@ -19,6 +19,7 @@ allowed_origins = [
     # Production Vercel domains (both old and new)
     "https://language-tool-hs6owowje-daniels-projects-a9d5dc59.vercel.app",
     "https://language-tool-o5tyo0qa9-daniels-projects-a9d5dc59.vercel.app",
+    "https://language-tool-seven.vercel.app",
     # Allow all vercel.app subdomains as backup
     "*"
 ]
