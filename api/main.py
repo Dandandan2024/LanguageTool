@@ -15,6 +15,7 @@ from llm.generation_api import (
     generate_single_content, generate_batch_content,
     get_generation_suggestions
 )
+from llm.content_generator import ContentGenerator, GenerationRequest, ContentType, CEFRLevel
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -60,16 +61,17 @@ from datetime import datetime, date, timedelta
 # Initialize FSRS scheduler
 fsrs_scheduler = FSRS()
 
-def generate_cards_from_lexemes_for_user(cur, username, user_cefr, count, theta_min, theta_max):
+def generate_cards_from_lexemes_for_user(conn, cur, username, user_cefr, count, theta_min, theta_max):
     """Generate cards on-demand from lexemes for a specific user"""
     import json
-    from random import choice
+    import asyncio
     
     # Map CEFR to theta for consistency
     cefr_theta_map = {"A1": -2.0, "A2": -1.0, "B1": 0.0, "B2": 1.0, "C1": 2.0, "C2": 3.0}
     target_theta = cefr_theta_map.get(user_cefr, 0.0)
     
     generated_cards = []
+    generator = ContentGenerator(conn)
     
     try:
         # Find lexemes the user hasn't learned yet, prioritizing by frequency
@@ -98,7 +100,7 @@ def generate_cards_from_lexemes_for_user(cur, username, user_cefr, count, theta_
             """, (count * 2,))
             available_lexemes = cur.fetchall()
         
-        # Generate cards for selected lexemes
+        # Generate sentence cards for selected lexemes
         for i, lexeme in enumerate(available_lexemes[:count]):
             if i >= count:
                 break
@@ -107,50 +109,36 @@ def generate_cards_from_lexemes_for_user(cur, username, user_cefr, count, theta_
             lemma = lexeme['lemma']
             pos = lexeme['pos'] or 'word'
             cefr = lexeme['cefr_level'] or user_cefr
-            
-            # Choose card type (vocabulary is simpler to generate)
-            card_type = choice(['vocabulary', 'cloze'])
-            
-            # Create simple card payload
-            if card_type == 'vocabulary':
-                payload = {
-                    "word": lemma,
-                    "translation": f"[{pos}] What does '{lemma}' mean?",
-                    "pos": pos,
-                    "target_word": lemma,
-                    "theta": target_theta,
-                    "cefr_level": cefr,
-                    "generation_method": "on_demand_simple",
-                    "difficulty": cefr
-                }
-            else:  # cloze
-                if pos == 'v':  # verb
-                    text = f"Я хочу ___ это."
-                    translation = "I want to ___ this."
-                elif pos == 'noun':
-                    text = f"Это мой ___."
-                    translation = "This is my ___."
-                else:
-                    text = f"___ очень важно."
-                    translation = "___ is very important."
-                
-                payload = {
-                    "text": text,
-                    "answer": lemma,
-                    "translation": translation,
-                    "target_word": lemma,
-                    "theta": target_theta,
-                    "cefr_level": cefr,
-                    "generation_method": "on_demand_simple",
-                    "hints": [f"{pos}"]
-                }
-            
-            # Insert the generated card
-            cur.execute("""
+            # Generate sentence using LLM
+            gen_request = GenerationRequest(
+                target_word=lemma,
+                target_lexeme_id=str(lexeme_id),
+                content_type=ContentType.SENTENCE,
+                user_cefr=CEFRLevel(cefr) if isinstance(cefr, str) else CEFRLevel.B1,
+                user_id=username,
+            )
+
+            content = asyncio.run(generator.generate_content(gen_request))
+
+            payload = {
+                "question_text": content.question_text,
+                "answer_text": content.answer_text,
+                "target_word": lemma,
+                "theta": target_theta,
+                "cefr_level": cefr,
+                "generation_method": "llm_sentence",
+                "supporting_words": content.supporting_words,
+            }
+
+            # Insert the generated sentence card
+            cur.execute(
+                """
                 INSERT INTO cards (type, language, payload, lexeme_id)
                 VALUES (%s, %s, %s, %s)
                 RETURNING id, type, payload
-            """, (card_type, 'ru', json.dumps(payload, ensure_ascii=False), lexeme_id))
+                """,
+                ('sentence', 'ru', json.dumps(payload, ensure_ascii=False), lexeme_id),
+            )
             
             new_card = cur.fetchone()
             
@@ -260,10 +248,10 @@ def sessions_next(req: NextRequest):
                 new_cards.extend(existing_new_cards)
                 remaining_count -= len(existing_new_cards)
                 
-                # If we still need more cards, generate them from lexemes
+                # If we still need more cards, generate them from lexemes via LLM sentence generation
                 if remaining_count > 0:
                     generated_cards = generate_cards_from_lexemes_for_user(
-                        cur, req.username, user_cefr, remaining_count, theta_min, theta_max
+                        conn, cur, req.username, user_cefr, remaining_count, theta_min, theta_max
                     )
                     new_cards.extend(generated_cards)
             

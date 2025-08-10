@@ -9,7 +9,7 @@ import asyncio
 from typing import Dict, List, Optional, Literal
 from dataclasses import dataclass
 from enum import Enum
-import openai
+from openai import OpenAI
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -51,7 +51,7 @@ class GeneratedContent:
 class ContentGenerator:
     def __init__(self, db_connection):
         self.db = db_connection
-        self.model = os.getenv("OPENAI_MODEL", "gpt-5-nano")
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self.max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", "500"))
         self.temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
         
@@ -59,7 +59,7 @@ class ContentGenerator:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        openai.api_key = api_key
+        self.client = OpenAI(api_key=api_key)
     
     async def generate_content(self, request: GenerationRequest) -> GeneratedContent:
         """Main content generation method"""
@@ -186,22 +186,15 @@ class ContentGenerator:
     "supporting_words": ["word1", "word2", "word3"]
 }}"""
 
-        # GPT-5 models don't support max_tokens or custom temperature
-        if self.model.startswith("gpt-5"):
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-        else:
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+        )
         
         try:
-            raw_response = response.choices[0].message['content'].strip()
+            raw_response = response.choices[0].message.content.strip()
             print(f"🤖 Raw OpenAI Response: {raw_response}")  # Debug print
             
             # Remove markdown code blocks if present
@@ -256,22 +249,20 @@ Format your response as JSON:
     "supporting_words": ["list", "of", "other", "key", "words", "in", "sentence"]
 }}"""
 
-        # GPT-5 models don't support max_tokens or custom temperature
-        if self.model.startswith("gpt-5"):
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-        else:
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+        )
         
         try:
-            result = json.loads(response.choices[0].message['content'])
+            raw_response = response.choices[0].message.content.strip()
+            if raw_response.startswith('```json'):
+                raw_response = raw_response[7:]
+            if raw_response.endswith('```'):
+                raw_response = raw_response[:-3]
+            result = json.loads(raw_response)
             
             return GeneratedContent(
                 content_type=ContentType.SENTENCE,
@@ -314,22 +305,20 @@ Format your response as JSON:
     "supporting_words": ["list", "of", "other", "key", "words", "in", "sentence"]
 }}"""
 
-        # GPT-5 models don't support max_tokens or custom temperature
-        if self.model.startswith("gpt-5"):
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-        else:
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=self.max_tokens,
-                temperature=self.temperature
-            )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+        )
         
         try:
-            result = json.loads(response.choices[0].message['content'])
+            raw_response = response.choices[0].message.content.strip()
+            if raw_response.startswith('```json'):
+                raw_response = raw_response[7:]
+            if raw_response.endswith('```'):
+                raw_response = raw_response[:-3]
+            result = json.loads(raw_response)
             
             return GeneratedContent(
                 content_type=ContentType.CLOZE,
