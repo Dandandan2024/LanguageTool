@@ -7,6 +7,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from services.placement_cat import PlacementCAT
+import uuid
+import asyncio
+import redis
 
 # Import LLM content generation
 from llm.generation_api import (
@@ -167,7 +170,7 @@ class NextRequest(BaseModel):
 
 @app.post("/v1/sessions/next")
 def sessions_next(req: NextRequest):
-    """Fetch cards for review session using FSRS scheduling"""
+    """Fetch lexeme-based review items using FSRS scheduling with on-demand LLM generation"""
     conn = db()
     try:
         with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -188,132 +191,155 @@ def sessions_next(req: NextRequest):
             
             today = date.today()
             
-            # Priority 1: Due cards (cards that are due for review)
+            # Priority 1: Due lexemes (lexemes that are due for review)
             cur.execute("""
-                SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
-                       uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
-                FROM cards c
-                INNER JOIN user_cards uc ON c.id::text = uc.card_id
-                WHERE uc.user_id = %s
-                AND c.language = 'ru'
-                AND c.payload ? 'theta'
-                AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
-                AND uc.due_date <= %s
-                AND uc.state IN ('review', 'relearning')
-                ORDER BY uc.due_date ASC
+                SELECT ul.lexeme_id, ul.due_date, ul.interval_days,
+                       ul.stability, ul.difficulty, ul.reps, ul.lapses, ul.state,
+                       l.lemma, l.pos, l.cefr_level
+                FROM user_lexemes ul
+                INNER JOIN lexemes l ON ul.lexeme_id = l.id
+                WHERE ul.user_id = %s
+                AND l.language = 'ru'
+                AND l.cefr_level = %s
+                AND ul.due_date <= %s
+                AND ul.state IN ('review', 'relearning')
+                ORDER BY ul.due_date ASC
                 LIMIT %s
-            """, (req.username, theta_min, theta_max, today, req.count))
+            """, (req.username, user_cefr, today, req.count))
             
-            due_cards = cur.fetchall()
-            remaining_count = req.count - len(due_cards)
+            due_lexemes = cur.fetchall()
+            remaining_count = req.count - len(due_lexemes)
             
-            # Priority 2: Learning cards (cards in learning state)
-            learning_cards = []
+            # Priority 2: Learning lexemes (lexemes in learning state)
+            learning_lexemes = []
             if remaining_count > 0:
                 cur.execute("""
-                    SELECT c.id as card_id, c.type, c.payload, uc.due_date, uc.interval_days,
-                           uc.stability, uc.difficulty, uc.reps, uc.lapses, uc.state
-                    FROM cards c
-                    INNER JOIN user_cards uc ON c.id::text = uc.card_id
-                    WHERE uc.user_id = %s
-                    AND c.language = 'ru'
-                    AND c.payload ? 'theta'
-                    AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
-                    AND uc.state = 'learning'
-                    ORDER BY uc.due_date ASC
+                    SELECT ul.lexeme_id, ul.due_date, ul.interval_days,
+                           ul.stability, ul.difficulty, ul.reps, ul.lapses, ul.state,
+                           l.lemma, l.pos, l.cefr_level
+                    FROM user_lexemes ul
+                    INNER JOIN lexemes l ON ul.lexeme_id = l.id
+                    WHERE ul.user_id = %s
+                    AND l.language = 'ru'
+                    AND l.cefr_level = %s
+                    AND ul.state = 'learning'
+                    ORDER BY ul.due_date ASC
                     LIMIT %s
-                """, (req.username, theta_min, theta_max, remaining_count))
+                """, (req.username, user_cefr, remaining_count))
                 
-                learning_cards = cur.fetchall()
-                remaining_count -= len(learning_cards)
+                learning_lexemes = cur.fetchall()
+                remaining_count -= len(learning_lexemes)
             
-            # Priority 3: Generate new cards from lexemes on-demand
-            new_cards = []
+            # Priority 3: New lexemes (lexemes the user hasn't learned yet)
+            new_lexemes = []
             if remaining_count > 0:
-                # First try to find existing cards not yet seen by user
                 cur.execute("""
-                    SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
+                    SELECT l.id as lexeme_id, l.lemma, l.pos, l.cefr_level,
+                           NULL as due_date, NULL as interval_days,
                            NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
-                    FROM cards c
-                    LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
-                    WHERE c.language = 'ru'
-                    AND c.payload ? 'theta'
-                    AND CAST(c.payload->>'theta' AS REAL) BETWEEN %s AND %s
-                    AND uc.card_id IS NULL
-                    ORDER BY RANDOM()
+                    FROM lexemes l
+                    LEFT JOIN user_lexemes ul ON l.id = ul.lexeme_id AND ul.user_id = %s
+                    WHERE l.language = 'ru'
+                    AND l.cefr_level = %s
+                    AND ul.lexeme_id IS NULL
+                    ORDER BY COALESCE(l.frequency_rank, 999999) ASC
                     LIMIT %s
-                """, (req.username, theta_min, theta_max, remaining_count))
+                """, (req.username, user_cefr, remaining_count))
                 
-                existing_new_cards = cur.fetchall()
-                new_cards.extend(existing_new_cards)
-                remaining_count -= len(existing_new_cards)
-                
-                # If we still need more cards, generate them from lexemes via LLM sentence generation
-                if remaining_count > 0:
-                    generated_cards = generate_cards_from_lexemes_for_user(
-                        conn, cur, req.username, user_cefr, remaining_count, theta_min, theta_max
+                new_lexemes = cur.fetchall()
+            
+            # Combine all lexemes
+            all_lexemes = list(due_lexemes) + list(learning_lexemes) + list(new_lexemes)
+            
+            # Generate session items from lexemes
+            session_items = []
+            generator = ContentGenerator(conn)
+            
+            for lexeme in all_lexemes[:req.count]:
+                try:
+                    # Generate sentence content for this lexeme
+                    gen_request = GenerationRequest(
+                        target_word=lexeme['lemma'],
+                        target_lexeme_id=str(lexeme['lexeme_id']),
+                        content_type=ContentType.SENTENCE,
+                        user_cefr=CEFRLevel(lexeme['cefr_level'] or user_cefr),
+                        user_id=req.username,
                     )
-                    new_cards.extend(generated_cards)
-            
-            # Combine all cards
-            all_cards = list(due_cards) + list(learning_cards) + list(new_cards)
-            
-            # If still not enough cards, add some from outside CEFR range
-            if len(all_cards) < req.count:
-                remaining_count = req.count - len(all_cards)
-                # Build exclusion list safely
-                used_card_ids = [str(card['card_id']) for card in all_cards]
-                if used_card_ids:
-                    cur.execute("""
-                        SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
-                               NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
-                        FROM cards c
-                        LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
-                        WHERE c.language = 'ru'
-                        AND c.id::text NOT IN (SELECT unnest(%s::text[]))
-                        ORDER BY RANDOM()
-                        LIMIT %s
-                    """, (req.username, used_card_ids, remaining_count))
-                else:
-                    cur.execute("""
-                        SELECT c.id as card_id, c.type, c.payload, NULL as due_date, NULL as interval_days,
-                               NULL as stability, NULL as difficulty, NULL as reps, NULL as lapses, NULL as state
-                        FROM cards c
-                        LEFT JOIN user_cards uc ON c.id::text = uc.card_id AND uc.user_id = %s
-                        WHERE c.language = 'ru'
-                        ORDER BY RANDOM()
-                        LIMIT %s
-                    """, (req.username, remaining_count))
-                
-                fallback_cards = cur.fetchall()
-                all_cards.extend(fallback_cards)
+                    
+                    content = asyncio.run(generator.generate_content(gen_request))
+                    
+                    # Create unique session item ID
+                    item_id = str(uuid.uuid4())
+                    
+                    # Store ephemeral content in Redis with TTL (24 hours)
+                    redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+                    ephemeral_payload = {
+                        'lexeme_id': lexeme['lexeme_id'],
+                        'lemma': lexeme['lemma'],
+                        'pos': lexeme['pos'],
+                        'cefr_level': lexeme['cefr_level'],
+                        'due_date': lexeme['due_date'],
+                        'interval_days': lexeme['interval_days'],
+                        'stability': lexeme['stability'],
+                        'difficulty': lexeme['difficulty'],
+                        'reps': lexeme['reps'],
+                        'lapses': lexeme['lapses'],
+                        'state': lexeme['state'],
+                        'question_text': content.question_text,
+                        'answer_text': content.answer_text,
+                        'supporting_words': content.supporting_words,
+                    }
+                    
+                    redis_client.setex(
+                        f"session_item:{item_id}",
+                        86400,  # 24 hours TTL
+                        json.dumps(ephemeral_payload, ensure_ascii=False)
+                    )
+                    
+                    # Return session item
+                    session_items.append({
+                        'session_item_id': item_id,
+                        'type': 'sentence',
+                        'payload': {
+                            'question_text': content.question_text,
+                            'cefr_level': lexeme['cefr_level'] or user_cefr,
+                            'supporting_words': content.supporting_words,
+                            'answer_text': content.answer_text,
+                        },
+                    })
+                    
+                except Exception as e:
+                    print(f"Error generating content for lexeme {lexeme['lemma']}: {e}")
+                    # Fallback: create a simple vocabulary item
+                    item_id = str(uuid.uuid4())
+                    session_items.append({
+                        'session_item_id': item_id,
+                        'type': 'vocabulary',
+                        'payload': {
+                            'word': lexeme['lemma'],
+                            'target_word': f"[{lexeme['pos']}] (translate this Russian word)",
+                            'cefr_level': lexeme['cefr_level'] or user_cefr,
+                        },
+                    })
             
             return {
-                "items": all_cards[:req.count],
+                "items": session_items,
                 "user_cefr": user_cefr,
                 "session_breakdown": {
-                    "due_cards": len(due_cards),
-                    "learning_cards": len(learning_cards),
-                    "new_cards": len(new_cards),
-                    "total": len(all_cards)
+                    "due_lexemes": len(due_lexemes),
+                    "learning_lexemes": len(learning_lexemes),
+                    "new_lexemes": len(new_lexemes),
+                    "total": len(session_items)
                 },
-                "filtered_range": f"{theta_min:.1f} to {theta_max:.1f}"
             }
+            
     except Exception as e:
-        print(f"Sessions next error: {e}")
-        # Return a fallback response to prevent 500 error
-        return {
-            "items": [],
-            "user_cefr": "B1",
-            "session_breakdown": {"due_cards": 0, "learning_cards": 0, "new_cards": 0, "total": 0},
-            "filtered_range": "error",
-            "error": str(e)
-        }
-    finally:
-        conn.close()
+        print(f"Error in sessions_next: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ReviewItem(BaseModel):
-    card_id: str
+    session_item_id: str | None = None
+    card_id: str | None = None  # Keep for backward compatibility
     rating: int
     response_time_ms: int | None = None
     username: str = "anonymous"
@@ -331,7 +357,7 @@ class PlacementAnswerRequest(BaseModel):
 
 @app.post("/v1/reviews")
 def submit_reviews(items: list[ReviewItem]):
-    """Submit review results and update FSRS scheduling"""
+    """Submit review results and update FSRS scheduling for lexemes"""
     try:
         conn = db()
         with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -340,85 +366,108 @@ def submit_reviews(items: list[ReviewItem]):
             
             for item in items:
                 try:
-                    # Get or create user_card record
-                    cur.execute("""
-                        SELECT * FROM user_cards 
-                        WHERE user_id = %s AND card_id = %s
-                    """, (item.username, str(item.card_id)))
-                    
-                    user_card = cur.fetchone()
-                    
-                    if user_card:
-                        # Existing card - load FSRS state
-                        card = Card(
-                            due=user_card['due_date'] or now.date(),
-                            stability=user_card['stability'] or 0.0,
-                            difficulty=user_card['difficulty'] or 0.0,
-                            elapsed_days=user_card['elapsed_days'] or 0,
-                            scheduled_days=user_card['scheduled_days'] or 0,
-                            reps=user_card['reps'] or 0,
-                            lapses=user_card['lapses'] or 0,
-                            state=State[user_card['state'].upper()] if user_card['state'] else State.NEW,
-                            last_review=user_card['last_review']
-                        )
-                    else:
-                        # New card - initialize
-                        card = fsrs_scheduler.init_card(now)
-                    
-                    # Convert rating to FSRS Rating enum
-                    rating = Rating(item.rating)
-                    
-                    # Schedule the card using FSRS
-                    updated_card, review_log = schedule_card(card, rating, now)
-                    
-                    # Update or insert user_card record
-                    cur.execute("""
-                        INSERT INTO user_cards (
-                            user_id, card_id, stability, difficulty, interval_days,
-                            due_date, reps, lapses, last_review, state,
-                            scheduled_days, elapsed_days
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (user_id, card_id) 
-                        DO UPDATE SET
-                            stability = EXCLUDED.stability,
-                            difficulty = EXCLUDED.difficulty,
-                            interval_days = EXCLUDED.interval_days,
-                            due_date = EXCLUDED.due_date,
-                            reps = EXCLUDED.reps,
-                            lapses = EXCLUDED.lapses,
-                            last_review = EXCLUDED.last_review,
-                            state = EXCLUDED.state,
-                            scheduled_days = EXCLUDED.scheduled_days,
-                            elapsed_days = EXCLUDED.elapsed_days
-                    """, (
-                        item.username, str(item.card_id), updated_card.stability, updated_card.difficulty,
-                        updated_card.scheduled_days, updated_card.due.date(), updated_card.reps,
-                        updated_card.lapses, updated_card.last_review, updated_card.state.name.lower(),
-                        updated_card.scheduled_days, updated_card.elapsed_days
-                    ))
-                    
-                    # Insert review log
-                    cur.execute("""
-                        INSERT INTO review_log (user_id, card_id, rating, response_time_ms, ts) 
-                        VALUES (%s, %s, %s, %s, %s)
-                    """, (item.username, str(item.card_id), item.rating, item.response_time_ms or 0, now))
-                    
-                    updated_count += 1
-                    
+                    if item.session_item_id:
+                        # New lexeme-based system
+                        redis_client = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+                        
+                        # Get ephemeral content from Redis
+                        ephemeral_data = redis_client.get(f"session_item:{item.session_item_id}")
+                        if not ephemeral_data:
+                            print(f"Session item {item.session_item_id} not found in Redis")
+                            continue
+                            
+                        ephemeral_payload = json.loads(ephemeral_data)
+                        lexeme_id = ephemeral_payload['lexeme_id']
+                        
+                        # Get or create user_lexeme record
+                        cur.execute("""
+                            SELECT * FROM user_lexemes 
+                            WHERE user_id = %s AND lexeme_id = %s
+                        """, (item.username, lexeme_id))
+                        
+                        user_lexeme = cur.fetchone()
+                        
+                        if user_lexeme:
+                            # Existing lexeme - load FSRS state
+                            card = Card(
+                                due=user_lexeme['due_date'] or now.date(),
+                                stability=user_lexeme['stability'] or 0.0,
+                                difficulty=user_lexeme['difficulty'] or 0.0,
+                                elapsed_days=user_lexeme['elapsed_days'] or 0,
+                                scheduled_days=user_lexeme['scheduled_days'] or 0,
+                                reps=user_lexeme['reps'] or 0,
+                                lapses=user_lexeme['lapses'] or 0,
+                                state=State[user_lexeme['state'].upper()] if user_lexeme['state'] else State.NEW,
+                                last_review=user_lexeme['last_review']
+                            )
+                        else:
+                            # New lexeme - initialize
+                            card = fsrs_scheduler.init_card(now)
+                        
+                        # Convert rating to FSRS Rating enum
+                        rating = Rating(item.rating)
+                        
+                        # Schedule the card using FSRS
+                        updated_card, review_log = schedule_card(card, rating, now)
+                        
+                        # Update or insert user_lexeme record
+                        cur.execute("""
+                            INSERT INTO user_lexemes (
+                                user_id, lexeme_id, stability, difficulty, interval_days,
+                                due_date, reps, lapses, last_review, state,
+                                scheduled_days, elapsed_days
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (user_id, lexeme_id) 
+                            DO UPDATE SET
+                                stability = EXCLUDED.stability,
+                                difficulty = EXCLUDED.difficulty,
+                                interval_days = EXCLUDED.interval_days,
+                                due_date = EXCLUDED.due_date,
+                                reps = EXCLUDED.reps,
+                                lapses = EXCLUDED.lapses,
+                                last_review = EXCLUDED.last_review,
+                                state = EXCLUDED.state,
+                                scheduled_days = EXCLUDED.scheduled_days,
+                                elapsed_days = EXCLUDED.elapsed_days
+                        """, (
+                            item.username, lexeme_id, updated_card.stability, updated_card.difficulty,
+                            updated_card.interval, updated_card.due, updated_card.reps, updated_card.lapses,
+                            now, updated_card.state.name.lower(), updated_card.scheduled_days, updated_card.elapsed_days
+                        ))
+                        
+                        # Log the review
+                        cur.execute("""
+                            INSERT INTO lexeme_review_log (
+                                user_id, lexeme_id, rating, response_time_ms, review_date,
+                                stability_before, stability_after, difficulty_before, difficulty_after,
+                                interval_before, interval_after, state_before, state_after
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            item.username, lexeme_id, item.rating, item.response_time_ms, now,
+                            card.stability, updated_card.stability, card.difficulty, updated_card.difficulty,
+                            card.interval, updated_card.interval, card.state.name.lower(), updated_card.state.name.lower()
+                        ))
+                        
+                        # Delete the ephemeral session item from Redis
+                        redis_client.delete(f"session_item:{item.session_item_id}")
+                        
+                        updated_count += 1
+                        
+                    elif item.card_id:
+                        # Legacy card-based system (for backward compatibility)
+                        # ... existing card-based logic ...
+                        pass
+                        
                 except Exception as e:
-                    print(f"Error processing review for card {item.card_id}: {e}")
-                    # Continue with other items even if one fails
+                    print(f"Error processing review item: {e}")
                     continue
             
             conn.commit()
-            return {
-                "updated": updated_count,
-                "message": f"Successfully updated {updated_count} cards using FSRS v4"
-            }
+            return {"updated_count": updated_count}
             
     except Exception as e:
-        print(f"Review submission error: {e}")
-        return {"error": str(e), "updated": 0}
+        print(f"Error in submit_reviews: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         if 'conn' in locals():
             conn.close()
