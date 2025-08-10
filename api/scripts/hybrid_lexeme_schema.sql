@@ -122,3 +122,4 @@ INSERT INTO word_forms (lexeme_id, form, grammatical_info, cefr_introduction_lev
 ((SELECT id FROM lexemes WHERE lemma = 'дом'), 'дома', '{"case": "nominative", "number": "plural"}', 'A2'),
 ((SELECT id FROM lexemes WHERE lemma = 'дом'), 'домов', '{"case": "genitive", "number": "plural"}', 'B2');
 
+

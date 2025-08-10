@@ -137,3 +137,4 @@ INSERT INTO word_forms (lexeme_id, form, grammatical_info) VALUES
 ((SELECT id FROM lexemes WHERE lemma = 'дом'), 'дома', '{"case": "nominative", "number": "plural"}'),
 ((SELECT id FROM lexemes WHERE lemma = 'дом'), 'домов', '{"case": "genitive", "number": "plural"}');
 
+

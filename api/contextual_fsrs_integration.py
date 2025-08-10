@@ -177,3 +177,4 @@ def handle_sentence_review(request_data, db_connection):
         "details": results["credit_details"]
     }
 
+

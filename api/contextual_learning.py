@@ -193,3 +193,4 @@ if __name__ == "__main__":
             print(f"  {credit.word}: {credit.credit_type.value} | "
                   f"×{credit.credit_multiplier:.1f} | rating {credit.adjusted_rating}")
 
+

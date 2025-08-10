@@ -221,7 +221,8 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify([{
-          card_id: currentCard.card_id,
+          session_item_id: currentCard.session_item_id || null,
+          card_id: currentCard.card_id || null,
           rating: rating,
           response_time_ms: 3000, // placeholder
           username: username
@@ -246,60 +247,51 @@ export default function Home() {
 
     const { type, payload } = card
 
-    switch (type) {
-      case 'cloze':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Fill in the blank:</h2>
-            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.text}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>Answer:</strong> {payload.answer}</p>
-                {payload.hints && (
-                  <p><strong>Hint:</strong> {payload.hints.join(', ')}</p>
-                )}
-              </div>
-            )}
-          </div>
-        )
-      
-      case 'vocabulary':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Vocabulary:</h2>
-            <p style={{ fontSize: '2rem', margin: '1rem 0' }}>
-              {payload.word}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>Translation:</strong> {payload.translation}</p>
-                <p><strong>Level:</strong> {payload.difficulty}</p>
-              </div>
-            )}
-          </div>
-        )
-      
-      case 'sentence':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Translate:</h2>
-            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.russian || payload.spanish}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>English:</strong> {payload.english}</p>
-                <p><strong>Level:</strong> {payload.difficulty}</p>
-              </div>
-            )}
-          </div>
-        )
-      
-      default:
-        return <p>Unknown card type: {type}</p>
+    if (type === 'sentence') {
+      const question = payload?.question_text || payload?.russian || payload?.spanish || ''
+      const answer = payload?.answer_text || payload?.english || ''
+      return (
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h2>Translate:</h2>
+          <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>{question}</p>
+          {showAnswer && (
+            <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+              <p><strong>Answer:</strong> {answer || '...'}</p>
+            </div>
+          )}
+        </div>
+      )
     }
+    if (type === 'vocabulary') {
+      const word = payload?.word || payload?.target_word || ''
+      const translation = payload?.translation || payload?.answer_text || ''
+      return (
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h2>Vocabulary:</h2>
+          <p style={{ fontSize: '2rem', margin: '1rem 0' }}>{word}</p>
+          {showAnswer && (
+            <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+              <p><strong>Translation:</strong> {translation || '...'}</p>
+            </div>
+          )}
+        </div>
+      )
+    }
+    if (type === 'cloze') {
+      const text = payload?.text || payload?.question_text || ''
+      const answer = payload?.answer || payload?.answer_text || ''
+      return (
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <h2>Fill in the blank:</h2>
+          <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>{text}</p>
+          {showAnswer && (
+            <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+              <p><strong>Answer:</strong> {answer || '...'}</p>
+            </div>
+          )}
+        </div>
+      )}
+    return <p>Unsupported item type: {type}</p>
   }
 
   const renderPlacementCard = (card) => {

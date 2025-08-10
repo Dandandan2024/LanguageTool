@@ -6,7 +6,7 @@ import os, json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
-from placement_cat import PlacementCAT
+from services.placement_cat import PlacementCAT
 
 # Import LLM content generation
 from llm.generation_api import (
@@ -54,7 +54,7 @@ def db():
     return conn
 
 # Import FSRS v4 implementation
-from fsrs import FSRS, Card, Rating, State, schedule_card
+from models.fsrs import FSRS, Card, Rating, State, schedule_card
 from datetime import datetime, date, timedelta
 
 # Initialize FSRS scheduler

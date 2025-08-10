@@ -1,0 +1,79 @@
+# Adaptive SRS Language App — Cursor Project Rules
+# These rules guide Cursor’s code generation and refactoring.
+
+## 1. Context
+This project is a monorepo implementing the Adaptive SRS Language App MVP.
+The goal: An Anki-compatible SRS using FSRS v4, with LLM-generated, level-appropriate sentence variants and adaptive onboarding for CEFR placement.
+
+**Repo structure:**
+- apps/api: FastAPI backend
+- apps/web: Next.js frontend
+- packages/fsrs_py: FSRS v4 Python implementation (mirrored to TS for offline support)
+- infra: Docker Compose for Postgres + Redis
+- .env / .env.example: environment configuration
+
+## 2. Tech stack & style
+- Backend: FastAPI, Python 3.11+, Pydantic v2, Postgres 15+, psycopg2, Redis.
+- Frontend: Next.js 14, React 18, TailwindCSS, TypeScript.
+- Tests: pytest for Python, Vitest/Jest for TS.
+- Use absolute imports where possible.
+- Follow PEP 8 for Python, standard ESLint/Prettier config for TS.
+
+## 3. FSRS integration
+- Primary scheduler: FSRS v4 (Free Spaced Repetition Scheduler) with default parameters from the reference implementation.
+- Fallback: SM-2 (only if FSRS is unavailable).
+- Ratings: 1=Again, 2=Hard, 3=Good, 4=Easy.
+- Maintain per-card: stability, difficulty, interval_days, due_date, reps, lapses.
+- FSRS functions must be deterministic and unit-tested.
+- Do not alter FSRS math without explicit instruction.
+
+## 4. API contracts
+### Placement:
+- `POST /v1/placement/start` — returns first anchor card.
+- `POST /v1/placement/answer` — accepts answer, returns next card or placement result.
+
+### Review sessions:
+- `POST /v1/sessions/next` — returns a mix of due, new, and trouble cards for the authenticated user.
+- `POST /v1/reviews` — accepts batch of review results, updates scheduling via FSRS, logs results.
+
+### Content generation:
+- `POST /v1/generate/lexeme` — queue LLM generation job for a lexeme.
+- `GET /v1/generate/jobs/{job_id}` — return job status + generated card IDs.
+
+**Implementation notes:**
+- All request/response bodies must be validated with Pydantic.
+- Responses should use snake_case for keys.
+- Use proper HTTP status codes (400 for validation errors, 404 for missing resources, etc.).
+
+## 5. Data model rules
+- Postgres is the source of truth for cards, user_cards, review_log, token_stats, lexemes.
+- JSONB can be used for payloads and flexible metadata.
+- Foreign keys must be explicit where applicable.
+
+## 6. Development rules
+- Keep endpoints small and focused.
+- Separate pure business logic (FSRS, validators) from I/O (DB, HTTP).
+- Write integration tests for critical endpoints.
+- Avoid embedding secrets or sensitive data in code.
+- All migrations must be reproducible and idempotent.
+
+## 7. LLM content generation & validation
+- Generated sentences must follow CEFR constraints and allowed vocabulary.
+- Apply validation: OOV token check, profanity/safety list, similarity threshold (<0.85 cosine).
+- Cache validated variants; regenerate only when mastery changes or boredom triggers.
+
+## 8. Safety & privacy
+- No storing of raw user free-text unless required for core features.
+- PII must be minimal and encrypted at rest (Postgres + S3).
+- LLM prompts must be safe and avoid unsafe cultural/political topics.
+
+## 9. Offline support
+- FSRS updates should run client-side when offline; sync results when online.
+- Server is source of truth; reconcile conflicts in favour of server.
+
+## 10. Code generation reminders
+- Always follow these rules unless explicitly told otherwise in a prompt.
+- When creating new code, prefer using existing utilities and adhering to architecture.
+- Document non-obvious logic with short, clear comments.
+
+# End of rules
