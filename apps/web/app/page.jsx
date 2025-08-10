@@ -26,7 +26,7 @@ export default function Home() {
   const [placementShowAnswer, setPlacementShowAnswer] = useState(false)
 
   // Use environment variable for API URL, fallback to local development
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8002'
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000'
 
   // Fetch user profile and cards when username is set
   useEffect(() => {
@@ -212,18 +212,15 @@ export default function Home() {
   }
 
   const submitReview = async (rating) => {
-    const currentCard = cards[currentCardIndex]
-    
+    const currentItem = cards[currentCardIndex]
     try {
       await fetch(`${API_BASE}/v1/reviews`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify([{
-          card_id: currentCard.card_id,
+          session_item_id: currentItem.session_item_id,
           rating: rating,
-          response_time_ms: 3000, // placeholder
+          response_time_ms: 3000,
           username: username
         }])
       })
@@ -241,65 +238,21 @@ export default function Home() {
     }
   }
 
-  const renderCard = (card) => {
-    if (!card) return null
-
-    const { type, payload } = card
-
-    switch (type) {
-      case 'cloze':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Fill in the blank:</h2>
-            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.text}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>Answer:</strong> {payload.answer}</p>
-                {payload.hints && (
-                  <p><strong>Hint:</strong> {payload.hints.join(', ')}</p>
-                )}
-              </div>
-            )}
+  const renderCard = (item) => {
+    if (!item) return null
+    const { type, payload } = item
+    if (type !== 'sentence') return <p>Unsupported item type: {type}</p>
+    return (
+      <div style={{ textAlign: 'center', padding: '2rem' }}>
+        <h2>Translate this sentence:</h2>
+        <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>{payload.question_text}</p>
+        {showAnswer && (
+          <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
+            <p><strong>Answer:</strong> {payload.answer_text || '...'}</p>
           </div>
-        )
-      
-      case 'vocabulary':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Vocabulary:</h2>
-            <p style={{ fontSize: '2rem', margin: '1rem 0' }}>
-              {payload.word}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>Translation:</strong> {payload.translation}</p>
-                <p><strong>Level:</strong> {payload.difficulty}</p>
-              </div>
-            )}
-          </div>
-        )
-      
-      case 'sentence':
-        return (
-          <div style={{ textAlign: 'center', padding: '2rem' }}>
-            <h2>Translate:</h2>
-            <p style={{ fontSize: '1.5rem', margin: '1rem 0' }}>
-              {payload.russian || payload.spanish}
-            </p>
-            {showAnswer && (
-              <div style={{ backgroundColor: '#f0f8ff', padding: '1rem', borderRadius: '8px' }}>
-                <p><strong>English:</strong> {payload.english}</p>
-                <p><strong>Level:</strong> {payload.difficulty}</p>
-              </div>
-            )}
-          </div>
-        )
-      
-      default:
-        return <p>Unknown card type: {type}</p>
-    }
+        )}
+      </div>
+    )
   }
 
   const renderPlacementCard = (card) => {
